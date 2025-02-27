@@ -1,136 +1,155 @@
-# Sliding window time-bound counter.
+# Sliding Window Time-Bound Counter
 
-Sliding window is divided into equal frames basing on the window size and frame_step.
-Each frame is bound to the frame_step set frame_step and keeps track of increments and decrements
-within a time period equal to the frame frame_step. Values in the ``data[0]`` are always bound
-to the current granular time frame_step. Tracking timestamp may be bound to a personalized timezone.
+## Overview
 
-The window keeps only those values which are within the window bounds. The old values are removed
-automatically when the window is full and the new frame period started.
+This project implements a sliding window time-bound counter, which allows tracking events over a configurable time 
+window divided into equal frames. Each frame tracks increments and decrements within a specific time period defined 
+by the `frame_step`. 
 
-The sum of the frames values increases while the window is not full. When it's full, the sum will
-decrease on each slide, due to erasing of the outdated frames.
+The window maintains only the values within the window bounds, automatically removing outdated frames as new 
+periods start.
 
-If the window was not used for a while and some (or all) frames are outdated and a new inc
-is made, the outdated frames will be replaced with the new period from the current moment
-up to the last valid timestamp (if there is one). In other words, on inc the window always
-keeps frames from the current moment back to history, ordered by granular frame_step without any gaps.
+## Features
 
-If total and/or frame limit is set, the window will throw ThrottlingError if any of these limits
-are exceeded. The error provides the information of the exceeded limit type and its value.
+- Automatically manages frame data based on the current time and window configuration
+- Supports limits on both frame and window values, raising `FrameLimitError` or `WindowLimitError` if exceeded
+- Provides various data storage options, including in-memory, shared memory, and Redis
+- Includes error handling for common scenarios, with specific exceptions derived from base errors within the library
+- Supports asynchronous and synchronous usage
 
-## Installation
+## Usage
 
-```
-pip install sliding-window -i https://${OWM_GIT_TOKEN}:${OWM_GIT_TOKEN_PASS}@pypi.owm.io/simple
-```
+### Creating a Sliding Window
 
-## Integrate with your tools
-
-Imagine, you have to call some external API with a limited number of requests per second. 
-Let's say - 10 req/sec.
-
-You need to create a window of a certain size, split in frames. Frame size shall be smaller than window size.
-Let's say that 10 req/sec - is our frame limit. 
-
-```python
-import time
-from datetime import datetime, timedelta
-from sliding_window import SlidingTimeWindow
-from sliding_window.errors import ThrottlingError
-
-window = SlidingTimeWindow(
-    window_size=timedelta(seconds=10),
-    frame_step=timedelta(seconds=1),
-    frame_limit=10,
-)
-
-requests = 0
-print(f"Started at {datetime.now()}")
-while requests < 100:
-    try:
-        window.check_limits()
-    except ThrottlingError as e:
-        print(datetime.now(), e, "Window sum:", window.sum, "Current frame:", window.current_frame)
-        time.sleep(0.2)
-        continue
-    window.inc()
-    requests += 1
-    print(datetime.now(), "Requests made:", requests)
-```
-
-Or the external API has more strict limits: 10 req/sec but not more than 100 req/min.  
-In this case our window size shall grow to 60 sec and frame size remains at 1 sec, and we set both limits.
-
-```python
-import time
-from datetime import datetime, timedelta
-from sliding_window import SlidingTimeWindow
-from sliding_window.errors import ThrottlingError
-
-window = SlidingTimeWindow(
-    window_size=timedelta(seconds=60),
-    window_limit=100,
-    frame_step=timedelta(seconds=1),
-    frame_limit=10,
-)
-
-requests = 0
-print(f"Started at {datetime.now()}")
-while requests < 150:
-    try:
-        window.check_limits()
-    except ThrottlingError as e:
-        print(datetime.now(), e, "Window sum:", window.sum, "Current frame:", window.current_frame)
-        time.sleep(0.2)
-        continue
-    window.inc()
-    requests += 1
-    print(datetime.now(), "Requests made:", requests)
-```
-
-External APIs may have several limits. For example, Gmail API has:
-- 2000 emails within last 24 hours:
+To create a sliding window, you can use the `SlidingWindow` class:
 
 ```python
 from datetime import timedelta
+from sliding_window import SlidingWindow
 
-win24h = {
-    "window_size": timedelta(hours=24), 
-    "frame_step": timedelta(minutes=1), 
-    "window_limit": 2000
-}
+
+window = SlidingWindow("my_window", timedelta(seconds=10), timedelta(seconds=1))
 ```
 
-- and 2 emails within 1 second but no more than 1200 emails within last 10 minutes: 
+This creates a sliding window with a window size of 10 seconds and a frame step of 1 second.
+
+### Updating the Window
+
+To update the window, you can use the `update` method:
+
 ```python
-from datetime import timedelta
-win10m =  {
-    "window_size": timedelta(minutes=10),
-    "frame_step": timedelta(seconds=1),
-    "window_limit": 1200,
-    "frame_limit": 2,
-}
+window.update()  # increment the current frame value by 1
+window.update(5)  # increment the current frame value by 5
 ```
 
-## SlidingTimeWindow Public API
-### Methods
-- `inc()`: increment window and frame sums value by 1 or pass your **positive** number
-- `dec()`: decrement window and frame sums by 1 or pass your **positive** number; `strict` flag indicates whether decrement below 0 is allowed or not
-- `check_limits()`: check current window state; if any of the limits is reached one of the `WindowLimitError` or `FrameLimitError` (both are inherited from `ThrottlingError`) will be raised.
-- `as_dict()`: serialize window to a dictionary; it may be useful if you want to persist its state across restarts
-- `clean()`: wipe the window and its frames (set the sums to 0).
+### Using the Window as a Decorator
 
-### Properties
-- `current_dt`: get the datetime of the current frame
-- `current_frame`: get current frame info
-- `last_frame`: get last frame info
-- `frame_limit`: get the maximum value limit for each frame in the window
-- `frame_step`: get the step between each frame in the window as a timedelta
-- `frames`: get total number of frames in the window
-- `data`: get a list of current window frames with their values inside
-- `sum`: get current window values sum
-- `timezone`: get window timezone (UTC by default)
-- `window_limit`: get window limit
-- `window_size`: get the total window size as a timedelta
+You can also use the window as a decorator for functions and coroutines:
+
+```python
+@window(5, throw=False)
+def my_function():
+    # code here
 ```
+
+This will increment the current frame value by 5 before executing the function.
+
+### Example Use Case
+
+Here's an example use case:
+
+```python
+import time
+
+window = SlidingWindow(timedelta(seconds=10), timedelta(seconds=1))
+
+while True:
+    window.update(1)  # increment the current frame value by 1
+    print(window.get_current_frame_value())  # print the current frame value
+    time.sleep(1)
+```
+
+This will create a sliding window and increment the current frame value by 1 every second, printing the current frame value.
+
+### Asynchronous Usage
+
+You can also use the window asynchronously:
+
+```python
+import asyncio
+
+async def main():
+    window = SlidingWindow(timedelta(seconds=10), timedelta(seconds=1))
+    await window.update(5)  # increment the current frame value by 5
+    print(await window.get_current_frame_value())  # print the current frame value
+
+asyncio.run(main())
+```
+
+## Storage Options
+
+The library provides three storage options:
+
+- In-memory storage using a `collections.deque`
+- Shared memory storage using a `multiprocessing.SharedMemory` buffer
+- Redis storage using the `redis` package
+
+You can specify the storage option when creating the window:
+
+```python
+window = SlidingWindow(timedelta(seconds=10), timedelta(seconds=1), storage="shared")
+```
+
+## Error Handling
+
+The library raises specific exceptions for common errors, such as `FrameLimitError` and `WindowLimitError`. You can catch these exceptions to handle errors:
+
+```python
+try:
+    window.update(5)
+except FrameLimitError:
+    print("Frame limit exceeded!")
+```
+
+## Testing
+
+The library includes a test suite to ensure its functionality. You can run the tests using pytest:
+
+```bash
+pytest tests/
+```
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! If you have any ideas or bug reports, please open an issue or submit a pull request.
+
+## Authors
+
+Your Name
+
+## Acknowledgments
+
+[List any acknowledgments or credits here]
+
+## API Documentation
+
+### SlidingWindow Class
+
+- `__init__(window_size, frame_step, storage="in-memory")`: Initializes a new sliding window with the given window size, frame step, and storage option.
+- `update(value)`: Updates the current frame value by the given value.
+- `get_current_frame_value()`: Returns the current frame value.
+- `get_window_size()`: Returns the window size.
+- `get_frame_step()`: Returns the frame step.
+
+### Exceptions
+
+- `FrameLimitError`: Raised when the frame limit is exceeded.
+- `WindowLimitError`: Raised when the window limit is exceeded.
+
+### Example Code
+
+See the examples directory for example code demonstrating the usage of the library.

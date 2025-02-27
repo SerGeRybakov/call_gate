@@ -43,7 +43,7 @@ repos:
 
       - id: check-added-large-files
         always_run: true
-        args: [ --maxkb=3000 ]
+        args: [ --maxkb=100 ]
 
       - id: detect-private-key
         always_run: true
@@ -58,52 +58,31 @@ repos:
       -   id: pyupgrade
           args: [--py39-plus]
 
+  - repo: https://github.com/python-poetry/poetry
+    rev: 1.7.0
+    hooks:
+      - id: poetry-check
+      - id: poetry-lock
+
   - repo: https://github.com/bwhmather/ssort
-    rev: 0.14.0  # Possible releases: https://github.com/bwhmather/ssort/releases
+    rev: 0.14.0
     hooks:
       - id: ssort
         entry: ssort
-        always_run: false
+        always_run: true
         stages:
           - commit
 
-  - repo: https://github.com/pycqa/isort
-    rev: 6.0.0  # Possible releases: https://github.com/pycqa/isort/releases
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.8
     hooks:
-      - id: isort
-        always_run: false
-        name: isort (python)
-        entry: isort
-        args: [ --profile=black ]
-        stages:
-          - commit
-
-  - repo: https://github.com/psf/black
-    rev: 25.1.0  # Possible releases: https://github.com/psf/black/releases
-    hooks:
-      - id: black
-        always_run: false
-        stages:
-          - commit
-        args: [ --config=pyproject.toml ]
-
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 7.1.2  # Possible releases: https://github.com/PyCQA/flake8/releases
-    hooks:
-      - id: flake8
-        name: flake8
-        files: ^sliding_window/
-        always_run: false
-        additional_dependencies:
-          - flake8-pyproject
-          - flake8-bugbear
-          - flake8-pytest-style
-          - flake8-docstrings
-          - flake8-import-order
-          - darglint
-        stages:
-          - commit
+      # Run the linter.
+      - id: ruff
+        types_or: [ python, pyi ]
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format
+        types_or: [ python, pyi ]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.15.0  # Possible releases: https://github.com/python/mypy/tags

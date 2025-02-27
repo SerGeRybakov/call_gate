@@ -290,7 +290,7 @@ class TestSlidingWindowInit:
     def test_init_from_dict(self):
         old_window = SlidingWindow(10, 5)
         for _ in range(100):
-            old_window.inc(random.randint(3, 5))
+            old_window.update(random.randint(3, 5))
             old_window.dec(random.randint(1, 3))
         new_window = SlidingWindow(**old_window.as_dict())
         assert new_window.window_size == old_window.window_size
@@ -307,13 +307,13 @@ class TestSlidingWindowInit:
 class TestSlidingWindowIncAndDec:
     def test_increment(self, sliding_window_2s_1s_no_limits):
         assert sliding_window_2s_1s_no_limits.sum == 0
-        sliding_window_2s_1s_no_limits.inc()
+        sliding_window_2s_1s_no_limits.update()
         assert sliding_window_2s_1s_no_limits.sum == 1
 
     @pytest.mark.parametrize("value", [1, 2, 2**128])
     def test_increment_value(self, sliding_window_2s_1s_no_limits, value):
         assert sliding_window_2s_1s_no_limits.sum == 0
-        sliding_window_2s_1s_no_limits.inc(value)
+        sliding_window_2s_1s_no_limits.update(value)
         assert sliding_window_2s_1s_no_limits.sum == value
 
     @pytest.mark.parametrize(
@@ -336,12 +336,12 @@ class TestSlidingWindowIncAndDec:
     )
     def test_increment_value_fails_on_type(self, sliding_window_2s_1s_no_limits, value):
         with pytest.raises(TypeError):
-            assert sliding_window_2s_1s_no_limits.inc(value)
+            assert sliding_window_2s_1s_no_limits.update(value)
 
     @pytest.mark.parametrize("value", [0, -1, -2, -(2**128)])
     def test_increment_value_fails_on_zero_and_negative_values(self, sliding_window_2s_1s_no_limits, value):
         with pytest.raises(ValueError):
-            assert sliding_window_2s_1s_no_limits.inc(value)
+            assert sliding_window_2s_1s_no_limits.update(value)
 
     def test_decrement_raises_on_single_empty_frame(self, sliding_window_2s_1s_no_limits):
         assert sliding_window_2s_1s_no_limits.sum == 0
@@ -352,14 +352,14 @@ class TestSlidingWindowIncAndDec:
     def test_decrement_raises_on_larger_value(self, sliding_window_2s_1s_no_limits):
         assert sliding_window_2s_1s_no_limits.sum == 0
         assert len(sliding_window_2s_1s_no_limits) == 0
-        sliding_window_2s_1s_no_limits.inc()
+        sliding_window_2s_1s_no_limits.update()
         with pytest.raises(ValueError):
             sliding_window_2s_1s_no_limits.dec(random.randint(2, 2**128))
 
     def test_decrement_one(self, sliding_window_2s_1s_no_limits):
         assert sliding_window_2s_1s_no_limits.sum == 0
         assert len(sliding_window_2s_1s_no_limits) == 0
-        sliding_window_2s_1s_no_limits.inc()
+        sliding_window_2s_1s_no_limits.update()
         sliding_window_2s_1s_no_limits.dec()
         assert sliding_window_2s_1s_no_limits.sum == 0
         assert len(sliding_window_2s_1s_no_limits) == 1
@@ -373,7 +373,7 @@ class TestSlidingWindowIncAndDec:
             continue
         increments = 1000
         for i in range(increments):
-            window.inc()
+            window.update()
         cur_val = window.current_frame.value
         assert cur_val < increments
         dec_value = 999
@@ -391,7 +391,7 @@ class TestSlidingWindowIncAndDec:
             continue
         increments = 1000
         for i in range(increments):
-            window.inc()
+            window.update()
         time.sleep(0.5)
         cur_val = window.current_frame.value
         assert cur_val < increments
@@ -409,7 +409,7 @@ class TestSlidingWindowIncAndDec:
             continue
         increments = 351000
         for i in range(increments):
-            window.inc()
+            window.update()
         time.sleep(0.5)
         with pytest.raises(ValueError):
             window.dec(window.sum - 1, strict=True)
@@ -421,11 +421,11 @@ class TestSlidingWindowIncAndDec:
         while not datetime.now(tz=window.timezone).microsecond < 300000:
             continue
         for i in range(1000):
-            window.inc()
+            window.update()
             time.sleep(0.001)
         dec_value = 998
         time.sleep(0.5)
-        window.inc()
+        window.update()
         assert window.sum < dec_value
         with pytest.raises(ValueError):
             assert window.dec(dec_value)
@@ -460,14 +460,14 @@ class TestSlidingWindowIncAndDec:
     def test_increment_until_full(self, sliding_window_2s_1s_no_limits):
         start = datetime.now()
         while datetime.now() < start + timedelta(seconds=2):
-            sliding_window_2s_1s_no_limits.inc()
+            sliding_window_2s_1s_no_limits.update()
         assert len(sliding_window_2s_1s_no_limits.data) == sliding_window_2s_1s_no_limits.frames
 
     def test_increment_replaces_old_data(self, sliding_window_2s_1s_no_limits):
         work = 1.6
         start = datetime.now()
         while datetime.now() < start + timedelta(seconds=work):
-            sliding_window_2s_1s_no_limits.inc()
+            sliding_window_2s_1s_no_limits.update()
         first_cur_frame_time = sliding_window_2s_1s_no_limits.current_frame.dt
         assert int(first_cur_frame_time.timestamp()) == int(datetime.now().timestamp())
         assert len(sliding_window_2s_1s_no_limits.data) == sliding_window_2s_1s_no_limits.frames
@@ -475,7 +475,7 @@ class TestSlidingWindowIncAndDec:
         last_data = sliding_window_2s_1s_no_limits.last_frame.value
         odata = sliding_window_2s_1s_no_limits.data.copy()
         time.sleep(1)
-        sliding_window_2s_1s_no_limits.inc()
+        sliding_window_2s_1s_no_limits.update()
         ndata = sliding_window_2s_1s_no_limits.data.copy()
         assert first_cur_frame_time == sliding_window_2s_1s_no_limits.last_frame.dt
         assert (
@@ -487,13 +487,13 @@ class TestSlidingWindowIncAndDec:
     def test_increment_replaces_old_data_after_long_sleep(self, sliding_window_2s_1s_no_limits):
         start = datetime.now()
         while datetime.now() < start + timedelta(seconds=2):
-            sliding_window_2s_1s_no_limits.inc()
+            sliding_window_2s_1s_no_limits.update()
         odata = deepcopy(sliding_window_2s_1s_no_limits.data)
         win_sum = sliding_window_2s_1s_no_limits.sum
 
         time.sleep(2)
 
-        sliding_window_2s_1s_no_limits.inc()
+        sliding_window_2s_1s_no_limits.update()
         ndata = deepcopy(sliding_window_2s_1s_no_limits.data)
 
         assert sliding_window_2s_1s_no_limits.sum < win_sum
@@ -505,13 +505,13 @@ class TestSlidingWindowIncAndDec:
         sliding_window = SlidingWindow(timedelta(seconds=4), timedelta(seconds=1))
         start = datetime.now()
         while datetime.now() < start + timedelta(seconds=4):
-            sliding_window.inc()
+            sliding_window.update()
         dt = sliding_window.current_dt
         win_sum = sliding_window.sum
         odata = list(sliding_window.data.copy())
         sleep = 2
         time.sleep(sleep)
-        sliding_window.inc()
+        sliding_window.update()
         ndata = list(sliding_window.data)
         assert dt == sliding_window.current_dt - sliding_window.frame_step * sleep
         assert sliding_window.data[sleep - 1] == 0
@@ -523,7 +523,7 @@ class TestSlidingWindowIncAndDec:
         assert sliding_window_2s_1s_no_limits.sum == 0
         assert sliding_window_2s_1s_no_limits.data == []
         assert sliding_window_2s_1s_no_limits.current_dt is None
-        sliding_window_2s_1s_no_limits.inc()
+        sliding_window_2s_1s_no_limits.update()
         assert len(sliding_window_2s_1s_no_limits) == 1
         assert sliding_window_2s_1s_no_limits.sum == 1
         assert sliding_window_2s_1s_no_limits.data == [1]
@@ -542,7 +542,7 @@ class TestSlidingWindowLimits:
             while datetime.now() < start + timedelta(
                 seconds=sliding_window_window_2s_1s_wl5.window_size.total_seconds()
             ):
-                sliding_window_window_2s_1s_wl5.inc()
+                sliding_window_window_2s_1s_wl5.update()
 
     def test_frame_limit(self, sliding_window_frame_2s_1s_fl5):
         start = datetime.now()
@@ -550,19 +550,19 @@ class TestSlidingWindowLimits:
             while datetime.now() < start + timedelta(
                 seconds=sliding_window_frame_2s_1s_fl5.window_size.total_seconds()
             ):
-                sliding_window_frame_2s_1s_fl5.inc()
+                sliding_window_frame_2s_1s_fl5.update()
 
     def test_both_limits(self):
         sliding_window = SlidingWindow(timedelta(seconds=4), timedelta(seconds=1), window_limit=10, frame_limit=2)
-        sliding_window.inc(5)
+        sliding_window.update(5)
         with pytest.raises(FrameLimitError):
-            sliding_window.inc()
+            sliding_window.update()
         time.sleep(1.1)
-        sliding_window.inc(5)
+        sliding_window.update(5)
         assert sliding_window.sum == 10
         time.sleep(1.1)
         with pytest.raises(WindowLimitError):
-            sliding_window.inc()
+            sliding_window.update()
 
 
 if __name__ == "__main__":

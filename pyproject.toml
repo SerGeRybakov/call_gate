@@ -1,24 +1,27 @@
 [tool.poetry]
 name = "sliding-window"
 version = "0.0.0"
-description = "Sliding Window Time Bound Counter"
-authors = ["Sergey Rybakov <srybakov@openweathermap.org>"]
+description = "Sliding Window - Rate Limit Counter"
+authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
 readme = "README.md"
-license = "GPL-3.0-only"
+license = "MIT"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: Information Technology",
-  "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+  "License :: OSI Approved :: MIT License",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Operating System :: Unix",
   "Operating System :: POSIX :: Linux",
   "Operating System :: MacOS :: MacOS X",
-  "Operating System :: Windows",
+  "Operating System :: Microsoft :: Windows",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 
 [tool.poetry-dynamic-versioning]
@@ -31,7 +34,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.extras]
-redos = ["redis"]
+redis = ["redis"]
 numpy = ["numpy"]
 
 [tool.poetry.dependencies]
@@ -42,26 +45,16 @@ numpy = { version = ">=1.24 <3" , optional = true}
 
 [tool.poetry.group.dev.dependencies]
 python-dateutil = "^2.9.0.post0"
-black = "^24.10.0"
 coverage = "^7.1.0"
-darglint = "^1.8.1"
-Flake8-pyproject = "^1.2.3"
-flake8 = "^5.0.4"
-flake8-bugbear = "^23.1.20"
-flake8-docstrings = "^1.7.0"
-flake8-import-order = "^0.18.2"
-flake8-pytest-style = "^1.7.0"
-isort = "^5.12.0"
+ssort = "^0.14.0"
+ruff = "^0.9.7"
 mypy = "^1.0.0"
 mypy-extensions = "^1.0.0"
-pep8-naming = "^0.13.3"
 pre-commit = "^3.0.4"
-pycln = "^2.1.3"
 pytest = "^7.2.0"
 pytest-cov = "^4.0.0"
 pytest-sugar = "^0.9.6"
 pytest-random-order = "^1.1.0"
-ssort = "^0.14.0"
 deepdiff = "^6.3.0"
 pytest-deadfixtures = "^2.2.1"
 pytest-timeout = "^2.3.1"
@@ -81,33 +74,84 @@ doc8 = "^0.11.2"
 ### TOOLS ###
 #############
 
-##############
-# FORMATTERS #
-##############
-
-[tool.black]  # code formatter
-target-version = ['py39']
+[tool.ruff]
+target-version = "py39"
 line-length = 120
+extend-exclude = [".idea", ".vscode", ".fleet", "tests/"]
+src = ["sliding_window"]
 
-[tool.isort]  # imports sorter
-# https://pycqa.github.io/isort/
-py_version = 39
-sections = ['FUTURE', 'STDLIB', 'THIRDPARTY', 'FIRSTPARTY', 'LOCALFOLDER']
-profile = "black"
-atomic = true
-include_trailing_comma = true
-line_length = 120
-lines_after_imports = 2
-lines_between_types = 1
-multi_line_output = 3
-extend_skip = [".md", ".json"]
-known_local_folder = ["sliding_window"]
-extra_standard_library = ["zoneinfo"]
-use_parentheses = true
+# https://docs.astral.sh/ruff/settings/#lint
+[tool.ruff.lint]
+select = [
+    'F', # flake8
+    'C90', # mccabe
+    'I', # isort
+    'UP', # pyupgrade
+    'S', # flake8-bandit
+    'ASYNC', # flake8-async
+    'B', # flake8-bugbear
+    'Q', # flake8-quotes
+    'TCH', # flake8-type-checking
+    'PTH', # flake8-use-pathlib
+     'D', # pydocstyle
+    'W', # pycodestyle (warnings)
+    'E', # pycodestyle (errors)
+    'N', # pep8-naming
+    'PT', # flake8-pytest-style
+    'PL', # pylint
+    'TID', # flake8-tidy-imports
+    'RUF', # ruff-specific rules
+]
 
-###########
-# LINTERS #
-###########
+ignore = [
+  "D105",
+  "D107",
+  "S112",
+#  "S104",
+#  "PLR2004"
+#  "TC001",
+#  "TC002",
+#  "UP040",
+]
+
+# https://docs.astral.sh/ruff/settings/#extend-per-file-ignores
+[tool.ruff.lint.extend-per-file-ignores]
+'__init__.py' = [
+    "D104", # missing-module-docstring
+    "F401", # {name} imported but unused; consider using importlib.util.find_spec to test for availability
+    "F403", # from {name} import * used; unable to detect undefined names
+    "F405", # {name} may be undefined, or defined from star imports
+    "TID252", # Relative imports from parent modules are banned
+]
+
+# https://docs.astral.sh/ruff/settings/#lintpylint
+[tool.ruff.lint.pylint]
+max-args = 12
+
+# https://docs.astral.sh/ruff/settings/#lintflake8-tidy-imports
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# https://docs.astral.sh/ruff/settings/#lintpydocstyle
+[tool.ruff.lint.pydocstyle]
+convention = 'pep257'
+
+# https://docs.astral.sh/ruff/settings/#lintmccabe
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+# https://docs.astral.sh/ruff/settings/#lintisort
+[tool.ruff.lint.isort]
+section-order = [
+    'future',
+    'standard-library',
+    'third-party',
+    'first-party',
+    'local-folder',
+]
+known-first-party = ["sliding_window"]
+lines-after-imports = 2
+lines-between-types = 1
 
 [tool.mypy]  # code linter
 # https://mypy.readthedocs.io/en/stable/
@@ -139,80 +183,6 @@ disable_error_code = "misc,no-redef,override,union-attr,index,assignment"
 module = "tests/*"
 disallow_untyped_defs = false
 
-[tool.flake8]  # code linter
-# https://flake8.pycqa.org/en/latest/
-# https://pypi.org/project/flake8-bugbear
-# https://pypi.org/project/flake8-docstrings/
-# https://pypi.org/project/flake8-import-order/
-# https://pypi.org/project/flake8-pytest-style/
-# https://pypi.org/project/pep8-naming/
-min_python_version = 3.9
-max-complexity = 14
-max-doc-length = 120
-max-line-length = 120
-strictness = "full"
-docstring_style = "sphinx"
-docstring-convention = "pep257"
-application_import_names = "sliding_window"
-import-order-style = "pycharm"
-exclude = [
-  "venv/*",
-  ".venv/*",
-  ".git/*",
-  "__pycache__/*",
-  ".mypy_cache/*",
-  ".pytest_cache/*",
-  ".idea/*",
-  "examples/*",
-  "templates",
-  "tmp/*",
-  "tests/*",
-  "tmp.py",
-]
-
-extend-select = ["D417"]
-per-file-ignores = [
-  "settings.py:"
-]
-ignore = [
-  "B012",
-  "B019",
-  "D100",
-  "D104",
-  "D105",
-  "D106",
-  "D107",
-  "D203",
-  "D401",
-  "D403",
-  "D404",
-  "DAR002",
-  "DAR003",
-  "DAR104",
-  "DAR105",
-  "DAR201",
-  "DAR301",
-  "DAR401",
-  "DAR402",
-  "DAR501",
-  "E203",
-  "E231",
-  "E702",
-  "I101",
-  "I201",
-  "I202",
-  "N807",
-  "N813",
-  "N818",
-  "W503",
-  "W504",
-]
-
-[tool.pycln]  # imports linter
-# https://hadialqattan.github.io/pycln/#/README
-all = true
-diff = true
-exclude = "venv/*,.venv/*,.git/*,__pycache__/*,examples/*"
 
 [tool.doc8]  # RST linter
 # https://github.com/PyCQA/doc8
@@ -221,7 +191,6 @@ max-line-length = 120
 [tool.bandit]  # security linter
 # https://github.com/PyCQA/bandit
 skips = ["B324"]
-
 
 #########
 # TESTS #

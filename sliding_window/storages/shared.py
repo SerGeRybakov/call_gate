@@ -1,52 +1,108 @@
+"""
+Shared in-memory window storage implementation using multiprocessing shared memory.
+
+This storage is suitable for multiprocess applications. The storage uses a numpy
+array in shared memory to store the values of the window. The array is divided into
+frames which are accessed by the index of the frame.
+
+The storage is thread-safe and process-safe for multiple readers and writers.
+
+The storage does not support persistence of the window values. When the application
+is restarted, the window values are lost.
+"""
+
 import fcntl
-import warnings
+
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import List, Optional
+from threading import RLock
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Optional, TextIO
 
 import numpy as np
-from numpy.typing import NDArray
+
+from typing_extensions import Unpack
 
 from sliding_window import FrameLimitError, WindowLimitError
-from sliding_window.base.base_storage import BaseWindowStorage
+from sliding_window.errors import FrameOverflowError, WindowOverflowError
+from sliding_window.storages.base_storage import BaseWindowStorage, _mute
+from sliding_window.typings import WindowState
+
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 class GlobalLock:
-    """Глобальный лок с файловой блокировкой для процессов."""
+    """Global lock with file-based locking for processes."""
+
+    def _open(self) -> None:
+        """Open the lockfile if it's not opened yet."""
+        if self.fd is None:
+            self.fd: TextIO = self.lockfile.open(mode="w", encoding="utf-8")
 
     def __init__(self, name: str):
         self.lockfile = Path(f".{name}.lock")
-        self.fd = self.lockfile.open(mode="w")
+        self.fd: Optional[TextIO] = None
+        self._open()
 
-    def acquire(self):
-        fcntl.flock(self.fd, fcntl.LOCK_EX)
+    def __del__(self) -> None:
+        self.close()
 
-    def release(self):
-        fcntl.flock(self.fd, fcntl.LOCK_UN)
+    def acquire(self) -> None:
+        """Acquire the lock."""
+        fcntl.flock(self.fd.fileno(), fcntl.LOCK_EX)
 
-    def close(self):
-        self.fd.close()
-        self.lockfile.unlink(missing_ok=True)
+    def release(self) -> None:
+        """Release the lock."""
+        fcntl.flock(self.fd.fileno(), fcntl.LOCK_UN)
 
-    def __enter__(self):
+    def close(self) -> None:
+        """Close the lockfile."""
+        if self.fd:
+            self.fd.close()
+            self.fd = None
+            self.lockfile.unlink(missing_ok=True)
+
+    def __enter__(self) -> None:
+        self._open()
         self.acquire()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
+    ) -> None:
         self.release()
-
-    def __del__(self):
-        self.close()
 
 
 class SharedMemoryWindowStorage(BaseWindowStorage):
-    """Shared memory based window storage."""
+    """Shared in-memory window storage implementation using multiprocessing shared memory.
+
+    This storage is suitable for multiprocess applications. The storage uses a numpy
+    array in shared memory to store the values of the window. The array is divided into
+    frames which are accessed by the index of the frame.
+
+    The storage is thread-safe and process-safe for multiple readers and writers.
+
+    The storage does not support persistence of the window values. When the application
+    is restarted, the window values are lost.
+
+    :param name: The name of the window.
+    :param capacity: The maximum number of values that the window can store.
+    :param data: Optional initial data for the window.
+    """
+
     _dtype = np.uint64
     _ref_count_dtype = np.uint16
 
-    def __init__(self, name: str, capacity: int, *, data: Optional[List[int]] = None, **kwargs) -> None:
+    def _set_sum(self) -> None:
+        self._sum[...] = np.sum(self._data)
+
+    def __init__(
+        self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
+    ) -> None:
         super().__init__(name, capacity)
         self._lock: GlobalLock = GlobalLock(name)
-        # self._rlock = RLock()
+        self._rlock = RLock()
         with self._lock:
             try:
                 self._data_shm = SharedMemory(name=name)
@@ -58,8 +114,8 @@ class SharedMemoryWindowStorage(BaseWindowStorage):
 
             if data:
                 if len(data) > self.capacity:
-                    data = data[:self.capacity]
-                self._data[:(len(data))] = data
+                    data = data[: self.capacity]
+                self._data[: (len(data))] = data
 
             try:
                 self._sum_shm = SharedMemory(name=f"{name}_sum")
@@ -70,78 +126,106 @@ class SharedMemoryWindowStorage(BaseWindowStorage):
 
     @property
     def sum(self) -> int:
-        with self._lock:
-            return int(self._sum)
+        """Get the current sum of the storage."""
+        with self._rlock:
+            with self._lock:
+                return int(self._sum)
 
-    def _set_sum(self) -> None:
-        self._sum[...] = np.sum(self._data)
+    @property
+    def state(self) -> WindowState:
+        """Get the sum of all values in the storage."""
+        with self._rlock:
+            with self._lock:
+                return WindowState(data=self._data.tolist(), sum=int(self._sum))
 
-    def close(self):
-        try:
+    def close(self) -> None:
+        """Close storage memory segment."""
+        with self._rlock:
             with self._lock:
                 self._data_shm.close()
-                self._data_shm.unlink()
+                _mute(self._data_shm.unlink)
                 self._sum_shm.close()
-                self._sum_shm.unlink()
+                _mute(self._sum_shm.unlink)
             self._lock.close()
-        except Exception as e:
-            warnings.warn(f"Failed to close shared memory: {e}")
 
     def as_list(self) -> list:
-        """Converts the contents of the shared array to a regular list.
-
-        Returns:
-            list: The contents of the shared array as a regular list.
-        """
-        with self._lock:
-            return self._data[:-1].tolist()
+        """Get the contents of the shared array as a regular list."""
+        with self._rlock:
+            with self._lock:
+                return self._data[:-1].tolist()
 
     def clear(self) -> None:
-        """Clears the contents of the shared array.
+        """Clear the contents of the shared array.
 
         Sets all elements of the shared array to zero. The operation is thread-safe.
         """
-        with self._lock:
-            self._data.fill(0)
-            self._sum[...] = 0
+        with self._rlock:
+            with self._lock:
+                self._data.fill(0)
+                self._sum[...] = 0
 
     def slide(self, n: int) -> None:
-        with self._lock:
-            if n <= 0:
-                pass
-            if n >= self.capacity:
-                self.clear()
-                self._sum[...] = 0
-            else:
-                self._data[n:] = self._data[:-n]
-                self._data[:n] = 0
+        """Slide window data to the right by n frames.
+
+        The skipped frames are filled with zeros.
+        :param n: The number of frames to slide
+        :return: the sum of the removed elements' values
+        """
+        with self._rlock:
+            with self._lock:
+                if n <= 0:
+                    pass
+                if n >= self.capacity:
+                    self.clear()
+                    self._sum[...] = 0
+                else:
+                    self._data[n:] = self._data[:-n]
+                    self._data[:n] = 0
+                    self._set_sum()
+
+    def atomic_update(self, value: int, frame_limit: int, window_limit: int) -> None:
+        """Atomically update the value of the most recent frame and the window sum.
+
+        If the new value of the most recent frame or the window sum exceeds the corresponding limit,
+        the method raises a FrameLimitError or WindowLimitError exception.
+
+        If the new value of the most recent frame or the window sum is less than 0,
+        the method raises a SlidingWindowOverflowError exception.
+
+        :param value: The value to add to the most recent frame value.
+        :param frame_limit: The maximum allowed value of the most recent frame.
+        :param window_limit: The maximum allowed value of the window sum.
+        :raises FrameLimitError: If the new value of the most recent frame exceeds the frame limit.
+        :raises WindowLimitError: If the new value of the window sum exceeds the window limit.
+        :raises SlidingWindowOverflowError: If the new value of the most recent frame or the window sum is less than 0.
+        :return: The new value of the most recent frame.
+        """
+        with self._rlock:
+            with self._lock:
+                current_value = int(self._data[0])
+                new_value = current_value + value
+                current_sum = int(self._sum)
+                new_sum = current_sum + value
+
+                if 0 < frame_limit < new_value:
+                    raise FrameLimitError("Frame limit exceeded")
+                if 0 < window_limit < new_sum:
+                    raise WindowLimitError("Window limit exceeded")
+                if new_sum < 0:
+                    raise WindowOverflowError("Window sum value must be >= 0.")
+                if new_value < 0:
+                    raise FrameOverflowError("Frame value must be >= 0.")
+
+                self._data[0] = new_value
+                self._sum[...] = new_sum
+
+    def __getitem__(self, index: int) -> int:
+        with self._rlock:
+            with self._lock:
+                return int(self._data[index])
+
+    def __setitem__(self, index: int, value: int) -> None:
+        with self._rlock:
+            with self._lock:
+                self._data[index] = value
                 self._set_sum()
-
-    def __getitem__(self, index):
-        with self._lock:
-            return int(self._data[index])
-
-    def __setitem__(self, index, value):
-        with self._lock:
-            self._data[index] = value
-            self._set_sum()
-
-    def atomic_update(self, value: int, frame_limit: int, window_limit: int):
-        """
-        Атомарно увеличивает значение текущего кадра и обновляет сумму окна.
-        Если при обновлении обнаруживается превышение лимитов, выбрасывается OverflowError.
-        """
-        with self._lock:
-            current_value = int(self._data[0])
-            new_value = current_value + value
-            current_sum = int(self._sum)
-            new_sum = current_sum + value
-
-            if frame_limit > 0 and new_value > frame_limit:
-                raise FrameLimitError("Frame limit exceeded")
-            if window_limit > 0 and new_sum > window_limit:
-                raise WindowLimitError("Window limit exceeded")
-
-            self._data[0] = new_value
-            self._sum[...] = new_sum
-            return new_value

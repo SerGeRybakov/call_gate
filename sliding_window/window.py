@@ -1,22 +1,53 @@
+"""
+This module implements a sliding window time-bound counter.
+
+The main class provided is `SlidingWindow`, which allows tracking events over a configurable time window
+divided into equal frames. Each frame tracks increments and decrements within a specific time period
+defined by the `frame_step`. The window maintains only the values within the window bounds, automatically
+removing outdated frames as new periods start.
+
+Features:
+  - Automatically manages frame data based on the current time and window configuration.
+  - Supports limits on both frame and window values, raising `FrameLimitError` or `WindowLimitError` if exceeded.
+  - Provides various data storage options, including in-memory, shared memory, and Redis.
+  - Includes error handling for common scenarios, with specific exceptions derived from base errors within the library.
+
+Optional dependencies:
+  - `numpy` for shared memory storage;
+  - `redis` for Redis-based storage.
+"""
+
+import asyncio
 import time
+
 from asyncio import iscoroutinefunction
+from collections.abc import Coroutine
 from datetime import datetime, timedelta
 from functools import wraps
-from multiprocessing import RLock, Lock
-from typing import Any, Optional, Union, Type
+from multiprocessing import Lock, RLock
+from types import TracebackType
+from typing import Any, Callable, Optional, Union
 from zoneinfo import ZoneInfo
 
 from sliding_window import ThrottlingError
-from sliding_window.base.base_storage import BaseWindowStorage
 from sliding_window.errors import (
     FrameLimitError,
     SlidingWindowImportError,
     SlidingWindowTypeError,
     SlidingWindowValueError,
+    SpecialSlidingWindowError,
     WindowLimitError,
 )
+from sliding_window.storages.base_storage import BaseWindowStorage, _mute
 from sliding_window.storages.simple import SimpleWindowStorage
-from sliding_window.typings import Frame, KWType, Sentinel, WindowStorageMode, WindowStorageModeType
+from sliding_window.typings import (
+    Frame,
+    Sentinel,
+    WindowState,
+    WindowStorageModeType,
+    WindowStorageType,
+)
+
 
 try:
     import numpy as np
@@ -27,6 +58,36 @@ try:
     import redis
 except ImportError:
     redis = Sentinel
+
+
+def dual(sync_func: Callable) -> Callable:
+    """Make a method work both synchronously and asynchronously.
+
+    If an event loop is already running, the method will execute in a thread pool,
+    returning an awaitable object. Otherwise, the synchronous function is called directly.
+    """
+
+    @wraps(sync_func)
+    def wrapper(
+        self: "SlidingWindow", *args: Any, **kwargs: Any
+    ) -> Union[Coroutine[Any, Any, None], Callable[[Any, ...], Any]]:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        async def async_inner(self: "SlidingWindow", *args: Any, **kwargs: Any) -> None:
+            if self._alock is None:
+                self._alock = asyncio.Lock()
+            async with self._alock:
+                return await asyncio.to_thread(sync_func, self, *args, **kwargs)
+
+        if loop and loop.is_running():
+            return async_inner(self, *args, **kwargs)
+        else:
+            return sync_func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class SlidingWindow:
@@ -56,9 +117,9 @@ class SlidingWindow:
     also originates from Python typical native exceptions: ``ValueError``, ``TypeError``, ``ImportError``.
 
     The window has 3 types of data storage:
-        - ``WindowStorageMode.simple`` (default) - stores data in a ``collections.deque``.
+        - ``WindowStorageType.simple`` (default) - stores data in a ``collections.deque``.
 
-        - ``WindowStorageMode.shared`` (requires ``numpy``) - stores data in a NumPy array attached to
+        - ``WindowStorageType.shared`` (requires ``numpy``) - stores data in a NumPy array attached to
         a ``multiprocessing.SharedMemory`` buffer that is shared between processes and threads started
         from one parent process/thread. Why numpy? Benchmarks of 10**6 (1 million) elements array write/read:
             1) numpy:           Write: 0.001528s, Read: 0.001265s
@@ -66,10 +127,10 @@ class SlidingWindow:
             3) cython:          Write: 0.067095s, Read: 0.080463s
 
 
-        - ``WindowStorageMode.redis`` (requires ``redis`` (``redis-py``)- stores data in Redis,
+        - ``WindowStorageType.redis`` (requires ``redis`` (``redis-py``)- stores data in Redis,
           what provides a distributed storage between multiple processes, servers and Docker containers.
 
-    Window constructor accepts ``**kwargs`` for ``WindowStorageMode.redis`` storage. The parameters described
+    Window constructor accepts ``**kwargs`` for ``WindowStorageType.redis`` storage. The parameters described
     at https://redis.readthedocs.io/en/latest/connections.html for ``redis.Redis`` object can be passed
     as keyword arguments. Redis URL is not supported. If not provided, the Window will use the default
     connection parameters, except the ``db``, which is set to ``15``.
@@ -80,7 +141,7 @@ class SlidingWindow:
     :param window_limit: Maximum allowed sum of values across the window, default is ``0`` (no limit).
     :param frame_limit: Maximum allowed value per frame in the window, default is ``0`` (no limit).
     :param timezone: Timezone name ("Europe/Rome") for handling frames timestamp, default is ``UTC``.
-    :param storage: Type of data storage: one of WindowStorageMode keys, default is ``WindowStorageMode.simple``.
+    :param storage: Type of data storage: one of WindowStorageType keys, default is ``WindowStorageType.simple``.
     :param kwargs: Special parameters for storage.
     """
 
@@ -145,26 +206,27 @@ class SlidingWindow:
                 if "Z" in timestamp:
                     timestamp = timestamp.replace("Z", "+00:00")
                 return datetime.fromisoformat(timestamp)
-            except ValueError:
-                raise SlidingWindowValueError("Timestamp must be an ISO string.")
+            except ValueError as e:
+                raise SlidingWindowValueError("Timestamp must be an ISO string.") from e
         return None
 
     def __init__(
-            self,
-            name: str,
-            window_size: Union[timedelta, int, float],
-            frame_step: Union[timedelta, int, float],
-            *,
-            window_limit: int = 0,
-            frame_limit: int = 0,
-            timezone: str = "UTC",
-            storage: WindowStorageModeType = WindowStorageMode.simple,
-            _data: Optional[Union[list[int], tuple[int, ...]]] = None,
-            _current_dt: Optional[str] = None,
-            **kwargs: KWType,
+        self,
+        name: str,
+        window_size: Union[timedelta, int, float],
+        frame_step: Union[timedelta, int, float],
+        *,
+        window_limit: int = 0,
+        frame_limit: int = 0,
+        timezone: str = "UTC",
+        storage: WindowStorageModeType = WindowStorageType.simple,
+        _data: Optional[Union[list[int], tuple[int, ...]]] = None,
+        _current_dt: Optional[str] = None,
+        **kwargs: dict[str, Any],
     ) -> None:
         self._lock = Lock()
         self._rlock = RLock()
+        self._alock: Optional[asyncio.Lock] = None
         self._name = name
         self._timezone: ZoneInfo = self._validate_and_set_timezone(timezone)
         self._window_size, self._frame_step = self._validate_and_set_window_and_granularity(window_size, frame_step)
@@ -173,48 +235,53 @@ class SlidingWindow:
         self._current_dt: datetime = self._validate_and_set_timestamp(_current_dt)
         self._kwargs = kwargs
 
-        storage_err = ValueError("Invalid `storage`: window storage storage must be one of `WindowStorageMode` values.")
-        if not isinstance(storage, (str, WindowStorageMode)):
+        storage_err = ValueError("Invalid `storage`: window storage storage must be one of `WindowStorageType` values.")
+        if not isinstance(storage, (str, WindowStorageType)):
             raise storage_err
 
         if isinstance(storage, str):
             try:
-                storage = WindowStorageMode[storage]
-            except KeyError:
-                raise storage_err
+                storage = WindowStorageType[storage]
+            except KeyError as e:
+                raise storage_err from e
 
-        if storage == WindowStorageMode.simple:
+        if storage == WindowStorageType.simple:
             storage_type = SimpleWindowStorage
 
-        elif storage == WindowStorageMode.shared:
+        elif storage == WindowStorageType.shared:
             if np is Sentinel:
                 raise SlidingWindowImportError(
                     "Package `numpy` is not installed. Please, install it manually to use big numbers in shared memory"
                     "or set storage to `simple' or `shared`."
                 )
             from sliding_window.storages.shared import SharedMemoryWindowStorage
+
             storage_type = SharedMemoryWindowStorage
 
-        elif storage == WindowStorageMode.redis:
+        elif storage == WindowStorageType.redis:
             if redis is Sentinel:
                 raise SlidingWindowImportError(
                     "Package `redis` (`redis-py`) is not installed. Please, install it manually to use Redis storage "
                     "or set storage to `simple' or `shared`."
                 )
             from sliding_window.storages.redis import RedisWindowStorage
+
             storage_type = RedisWindowStorage
 
         else:
             raise storage_err
 
-        self._storage: WindowStorageMode = storage
+        self._storage: WindowStorageType = storage
         with self._lock:
-            kw = {"name": name, "capacity": self._frames}
+            kw: dict[str, Any] = {"name": name, "capacity": self._frames}
             if _data:
                 kw.update({"data": _data})
             if kwargs:
                 kw.update(kwargs)
             self._data: BaseWindowStorage = storage_type(**kw)
+
+    def __del__(self) -> None:
+        _mute(self.close)
 
     def _current_step(self) -> datetime:
         current_time = datetime.now(self._timezone)
@@ -232,6 +299,44 @@ class SlidingWindow:
         elif diff > 0:
             self._data.slide(diff)
             self._current_dt = current_step
+
+    @dual
+    def update(self, value: int = 1, throw: bool = False) -> None:
+        """Update the counter in the current frame and window sum.
+
+        It is possible to update the window with a custom **positive** value.
+
+        Passing zero will do nothing.
+
+        Passing a negative value may raise a ``SlidingWindowOverflowError`` exception,
+        because neither the window sum nor the frame value can be negative.
+
+        :param value: The value to add to the current frame value.
+        :param throw: If True, the method will raise an exception if the limit is exceeded.
+        """
+        if not self._is_int(value):
+            raise SlidingWindowTypeError("Value must be an integer.")
+        if value == 0:
+            return  # return early as there's nothing to do
+
+        with self._rlock:
+            self._refresh_frames()
+            try:
+                self._data.atomic_update(value, self._frame_limit, self._window_limit)
+            except Exception as e:
+                if throw:
+                    if isinstance(e, SpecialSlidingWindowError):
+                        raise e.__class__(e.message, self) from e
+                    else:
+                        raise e
+                else:
+                    while True:
+                        self._refresh_frames()
+                        try:
+                            self._data.atomic_update(value, self._frame_limit, self._window_limit)
+                            break
+                        except ThrottlingError:
+                            time.sleep(self.frame_step.total_seconds())
 
     @property
     def name(self) -> str:
@@ -255,6 +360,11 @@ class SlidingWindow:
             return self._data.as_list()
 
     @property
+    def state(self) -> WindowState:
+        """Get the current state of the storage."""
+        return self._data.state
+
+    @property
     def frame_step(self) -> timedelta:
         """Get the step of the window frames as a timedelta."""
         return self._frame_step
@@ -263,6 +373,11 @@ class SlidingWindow:
     def frames(self) -> int:
         """Get the number of frames in the window."""
         return self._frames
+
+    @property
+    def limits(self) -> tuple[int, int]:
+        """Get window and frame limits in a tuple."""
+        return self._window_limit, self._frame_limit
 
     @property
     def window_limit(self) -> int:
@@ -318,33 +433,6 @@ class SlidingWindow:
             if self._window_limit and sum_ >= self._window_limit:
                 raise WindowLimitError(f"Window limit is reached: {self._window_limit}", self)
 
-    def inc(self, value: int = 1, throw: bool = True) -> None:
-        """Увеличивает счётчик в текущем кадре."""
-        if not self._is_int(value):
-            raise SlidingWindowTypeError("Value must be an integer.")
-        if value == 0:
-            return  # return early as there's nothing to do
-
-        with self._rlock:
-            self._refresh_frames()
-            try:
-                self._data.atomic_update(value, self._frame_limit, self._window_limit)
-            except Exception as e:
-                if throw:
-                    if isinstance(e, ThrottlingError):
-                        raise e.__class__(e.message, self) from e
-                    else:
-                        raise e
-                else:
-                    while True:
-                        time.sleep(self.frame_step.total_seconds())
-                        self._refresh_frames()
-                        try:
-                            self._data.atomic_update(value, self._frame_limit, self._window_limit)
-                            break
-                        except Exception:
-                            continue
-
     def clean(self) -> None:
         """Clean the window (make it empty).
 
@@ -370,18 +458,35 @@ class SlidingWindow:
                 "storage": self.storage,
                 "_data": self.data,
                 "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
-                **self._kwargs
+                **self._kwargs,
             }
 
-    def __call__(self, *args, **kwargs):
-        """Window instance decorator for functions and coroutines."""
+    def close(self) -> None:
+        """Close the window."""
+        self._data.close()
 
-        def decorator(func):
-            @wraps(func)
-            async def awrapper(*args, **kwargs): ...
+    def __call__(self, value: int = 1, *, throw: bool = False) -> Callable[[Any], Callable[[Any, Any], Any]]:
+        """Window instance decorator for functions and coroutines.
+
+        :param value: The value to add to the current frame value.
+        :param throw: If True, the method will raise an exception if the limit is exceeded.
+        """
+
+        def decorator(func: Callable[[Any, ...], Any]) -> Callable[[Any, ...], Any]:
+            """Decorate function.
+
+            :param func: The function or coroutine to decorate.
+            """
 
             @wraps(func)
-            def wrapper(*args, **kwargs): ...
+            async def awrapper(*args: Any, **kwargs: Any) -> Any:
+                await self.update(value, throw)
+                return await func(*args, **kwargs)
+
+            @wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                self.update(value, throw)
+                return func(*args, **kwargs)
 
             if iscoroutinefunction(func):
                 return awrapper
@@ -389,65 +494,93 @@ class SlidingWindow:
 
         return decorator
 
-    def __repr__(self) -> str:
-        d = self.as_dict()
-        d.pop("_data")
-        d.pop("_current_dt")
-        return f"{self.__class__.__name__}({', '.join(f'{k}={v}' for k, v in d.items())})"
+    def __len__(self) -> int:
+        """Get current number of the sliding window existing frames."""
+        return self._frames
 
-    def close(self):
-        self._data.close()
+    def __bool__(self) -> bool:
+        """Check if the window is empty (full of zeros) or not."""
+        return bool(self._data)
 
-    def __getstate__(self):
+    def __enter__(self, value: int = 1, *, throw: bool = False) -> Any:
+        self.update(value, throw)
+
+    def __exit__(
+        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
+    ) -> None:
+        pass
+
+    async def __aenter__(self, value: int = 1, *, throw: bool = False) -> Any:
+        await self.update(value, throw)
+
+    async def __aexit__(
+        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
+    ) -> None:
+        pass
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Get the state of the window as a dictionary."""
         return self.as_dict()
 
-    def __setstate__(self, state):
-        # Восстанавливаем основные параметры
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
+        """Reduce the instance to a tuple: (callable, args, state)."""
+        return (
+            self.__class__,
+            (self._name, self._window_size, self._frame_step),
+            self.__getstate__(),
+        )
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Set the state of the window from a dictionary.
+
+        :param state: The state dictionary.
+        """
+        # Restore main parameters
         self._name = state["name"]
         self._window_size = timedelta(seconds=state["window_size"])
         self._frame_step = timedelta(seconds=state["frame_step"])
         self._window_limit = state["window_limit"]
         self._frame_limit = state["frame_limit"]
         self._timezone = ZoneInfo(state["timezone"])
-        self._storage = WindowStorageMode[state["storage"]]
+        self._storage = WindowStorageType[state["storage"]]
         self._frames = int(self._window_size // self._frame_step)
-        self._current_dt = (
-            datetime.fromisoformat(state["_current_dt"]) if state["_current_dt"] else None
-        )
-        # Остальные дополнительные параметры
+        self._current_dt = datetime.fromisoformat(state["_current_dt"]) if state["_current_dt"] else None
+        # Other additional parameters
         self._kwargs = {
             k: v
             for k, v in state.items()
             if k
-               not in (
-                   "name",
-                   "window_size",
-                   "frame_step",
-                   "window_limit",
-                   "frame_limit",
-                   "timezone",
-                   "storage",
-                   "_data",
-                   "_current_dt",
-               )
+            not in (
+                "name",
+                "window_size",
+                "frame_step",
+                "window_limit",
+                "frame_limit",
+                "timezone",
+                "storage",
+                "_data",
+                "_current_dt",
+            )
         }
-        # Создаем блокировку заново (она не может быть запиклена)
+        # Recreate the lock (it cannot be pickled)
         self._lock = RLock()
 
-        # Восстанавливаем хранилище данных в зависимости от режима.
-        if self._storage == WindowStorageMode.simple:
+        # Restore data storage depending on the mode.
+        if self._storage == WindowStorageType.simple:
             storage = SimpleWindowStorage
-        elif self._storage == WindowStorageMode.shared:
+        elif self._storage == WindowStorageType.shared:
             from sliding_window.storages.shared import SharedMemoryWindowStorage
+
             storage = SharedMemoryWindowStorage
-        elif self._storage == WindowStorageMode.redis:
+        elif self._storage == WindowStorageType.redis:
             from sliding_window.storages.redis import RedisWindowStorage
+
             storage = RedisWindowStorage
         else:
             raise ValueError("Invalid storage storage during unpickling.")
 
-        # Вызовем конструктор хранилища, передав сохранённое состояние данных.
-        # Обратите внимание, что в конструкторе ожидается параметр 'data' вместо '_data'.
+        # Call the storage constructor, passing the saved state of the data.
+        # Note that the constructor expects the parameter 'data' instead of '_data'.
         self._data = storage(
             name=self._name,
             capacity=self._frames,
@@ -455,30 +588,13 @@ class SlidingWindow:
             **self._kwargs,
         )
 
-    def __reduce__(self):
-        # Метод __reduce__ возвращает кортеж: (callable, args, state)
-        return (
-            self.__class__,
-            (self._name, self._window_size, self._frame_step),
-            self.__getstate__(),
-        )
+    def __repr__(self) -> str:
+        """Window representation."""
+        d = self.as_dict()
+        d.pop("_data")
+        d.pop("_current_dt")
+        return f"{self.__class__.__name__}({', '.join(f'{k}={v}' for k, v in d.items())})"
 
-    def __len__(self) -> int:
-        """Current number of the sliding window existing frames."""
-        return self._frames
-
-    def __bool__(self) -> bool:
-        """Check if the window is empty (full of zeros) or not?"""
-        return bool(self._data)
-
-    def __enter__(self, *args, **kwargs) -> None:
-        pass
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
-
-    async def __aenter__(self, *args, **kwargs):
-        pass
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
+    def __str__(self) -> str:
+        """Window string representation."""
+        return str(self.state)

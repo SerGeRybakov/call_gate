@@ -37,7 +37,7 @@ def shared_window(request):
 # Функции-воркеры для тестов
 def process_worker_inc(shared_window, count):
     for _ in range(count):
-        shared_window.inc(1)
+        shared_window.update(1)
 
 
 def process_worker_threads(shared_window, inc_count, thread_count):
