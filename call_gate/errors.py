@@ -15,7 +15,7 @@ asyncio library.
 The library exceptions are derived from the Exception class and contain the
 following information:
   - A message describing the error
-  - A reference to the window object that raised the error (if applicable)
+  - A reference to the gate object that raised the error (if applicable)
 """
 
 from typing import TYPE_CHECKING, Any, Optional
@@ -24,67 +24,67 @@ from typing_extensions import Unpack
 
 
 if TYPE_CHECKING:
-    from sliding_window.window import SlidingWindow
+    from call_gate.gate import CallGate
 
 __all__ = [
+    "CallGateBaseError",
+    "CallGateImportError",
+    "CallGateOverflowError",
+    "CallGateTypeError",
+    "CallGateValueError",
     "FrameLimitError",
     "FrameOverflowError",
-    "SlidingWindowBaseError",
-    "SlidingWindowImportError",
-    "SlidingWindowOverflowError",
-    "SlidingWindowTypeError",
-    "SlidingWindowValueError",
-    "SpecialSlidingWindowError",
+    "GateLimitError",
+    "GateOverflowError",
+    "SpecialCallGateError",
     "ThrottlingError",
-    "WindowLimitError",
-    "WindowOverflowError",
 ]
 
 
-class SlidingWindowBaseError(Exception):
+class CallGateBaseError(Exception):
     """Base error for all errors explicitly raised within the library."""
 
 
-class SlidingWindowImportError(SlidingWindowBaseError, ImportError):
+class CallGateImportError(CallGateBaseError, ImportError):
     """Import error."""
 
 
-class SlidingWindowValueError(SlidingWindowBaseError, ValueError):
+class CallGateValueError(CallGateBaseError, ValueError):
     """Value error."""
 
 
-class SlidingWindowTypeError(SlidingWindowBaseError, TypeError):
+class CallGateTypeError(CallGateBaseError, TypeError):
     """Type error."""
 
 
-class SpecialSlidingWindowError(SlidingWindowBaseError):
+class SpecialCallGateError(CallGateBaseError):
     """Base error for all errors explicitly raised within the library."""
 
     def __init__(
         self,
         message: str,
-        window: Optional["SlidingWindow"] = None,
+        gate: Optional["CallGate"] = None,
         *args: Unpack[tuple[Any, ...]],
         **kwargs: Unpack[dict[str, Any]],
     ) -> None:
         super().__init__(message, *args, **kwargs)  # type: ignore[arg-type]
-        self.window = window
+        self.gate = gate
         self.message = message
 
 
-class SlidingWindowOverflowError(SpecialSlidingWindowError, OverflowError):
+class CallGateOverflowError(SpecialCallGateError, OverflowError):
     """Overflow error."""
 
 
-class WindowOverflowError(SlidingWindowOverflowError):
-    """Window overflow error."""
+class GateOverflowError(CallGateOverflowError):
+    """gate overflow error."""
 
 
-class FrameOverflowError(SlidingWindowBaseError):
+class FrameOverflowError(CallGateBaseError):
     """Frame overflow error."""
 
 
-class ThrottlingError(SpecialSlidingWindowError):
+class ThrottlingError(SpecialCallGateError):
     """Base limit error, raised when rate limits are reached or violated."""
 
 
@@ -92,5 +92,5 @@ class FrameLimitError(ThrottlingError):
     """Custom limit error, raised when frame limit is reached or violated."""
 
 
-class WindowLimitError(ThrottlingError):
-    """Custom limit error, raised when window limit is reached or violated."""
+class GateLimitError(ThrottlingError):
+    """Custom limit error, raised when gate limit is reached or violated."""

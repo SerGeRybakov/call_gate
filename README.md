@@ -12,7 +12,7 @@ periods start.
 ## Features
 
 - Automatically manages frame data based on the current time and window configuration
-- Supports limits on both frame and window values, raising `FrameLimitError` or `WindowLimitError` if exceeded
+- Supports limits on both frame and window values, raising `FrameLimitError` or `GateLimitError` if exceeded
 - Provides various data storage options, including in-memory, shared memory, and Redis
 - Includes error handling for common scenarios, with specific exceptions derived from base errors within the library
 - Supports asynchronous and synchronous usage
@@ -21,14 +21,13 @@ periods start.
 
 ### Creating a Sliding Window
 
-To create a sliding window, you can use the `SlidingWindow` class:
+To create a sliding window, you can use the `CallGate` class:
 
 ```python
 from datetime import timedelta
-from sliding_window import SlidingWindow
+from call_gate import CallGate
 
-
-window = SlidingWindow("my_window", timedelta(seconds=10), timedelta(seconds=1))
+window = CallGate("my_window", timedelta(seconds=10), timedelta(seconds=1))
 ```
 
 This creates a sliding window with a window size of 10 seconds and a frame step of 1 second.
@@ -61,7 +60,7 @@ Here's an example use case:
 ```python
 import time
 
-window = SlidingWindow(timedelta(seconds=10), timedelta(seconds=1))
+window = CallGate(timedelta(seconds=10), timedelta(seconds=1))
 
 while True:
     window.update(1)  # increment the current frame value by 1
@@ -79,7 +78,7 @@ You can also use the window asynchronously:
 import asyncio
 
 async def main():
-    window = SlidingWindow(timedelta(seconds=10), timedelta(seconds=1))
+    window = CallGate(timedelta(seconds=10), timedelta(seconds=1))
     await window.update(5)  # increment the current frame value by 5
     print(await window.get_current_frame_value())  # print the current frame value
 
@@ -97,12 +96,12 @@ The library provides three storage options:
 You can specify the storage option when creating the window:
 
 ```python
-window = SlidingWindow(timedelta(seconds=10), timedelta(seconds=1), storage="shared")
+window = CallGate(timedelta(seconds=10), timedelta(seconds=1), storage="shared")
 ```
 
 ## Error Handling
 
-The library raises specific exceptions for common errors, such as `FrameLimitError` and `WindowLimitError`. You can catch these exceptions to handle errors:
+The library raises specific exceptions for common errors, such as `FrameLimitError` and `GateLimitError`. You can catch these exceptions to handle errors:
 
 ```python
 try:
@@ -137,7 +136,7 @@ Your Name
 
 ## API Documentation
 
-### SlidingWindow Class
+### CallGate Class
 
 - `__init__(window_size, frame_step, storage="in-memory")`: Initializes a new sliding window with the given window size, frame step, and storage option.
 - `update(value)`: Updates the current frame value by the given value.
@@ -148,7 +147,7 @@ Your Name
 ### Exceptions
 
 - `FrameLimitError`: Raised when the frame limit is exceeded.
-- `WindowLimitError`: Raised when the window limit is exceeded.
+- `GateLimitError`: Raised when the window limit is exceeded.
 
 ### Example Code
 

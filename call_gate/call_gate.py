@@ -1,14 +1,14 @@
 """
-This module implements a sliding window time-bound counter.
+This module implements a thread-safe, process-safe, coroutine-sage distributed time-bound rate limit counter.
 
-The main class provided is `SlidingWindow`, which allows tracking events over a configurable time window
+The main class provided is `CallGate`, which allows tracking events over a configurable time gate
 divided into equal frames. Each frame tracks increments and decrements within a specific time period
-defined by the `frame_step`. The window maintains only the values within the window bounds, automatically
+defined by the `frame_step`. The gate maintains only the values within the gate bounds, automatically
 removing outdated frames as new periods start.
 
 Features:
-  - Automatically manages frame data based on the current time and window configuration.
-  - Supports limits on both frame and window values, raising `FrameLimitError` or `WindowLimitError` if exceeded.
+  - Automatically manages frame data based on the current time and gate configuration.
+  - Supports limits on both frame and gate values, raising `FrameLimitError` or `GateLimitError` if exceeded.
   - Provides various data storage options, including in-memory, shared memory, and Redis.
   - Includes error handling for common scenarios, with specific exceptions derived from base errors within the library.
 
@@ -29,23 +29,23 @@ from types import TracebackType
 from typing import Any, Callable, Optional, Union
 from zoneinfo import ZoneInfo
 
-from sliding_window import ThrottlingError
-from sliding_window.errors import (
+from call_gate import ThrottlingError
+from call_gate.errors import (
+    CallGateImportError,
+    CallGateTypeError,
+    CallGateValueError,
     FrameLimitError,
-    SlidingWindowImportError,
-    SlidingWindowTypeError,
-    SlidingWindowValueError,
-    SpecialSlidingWindowError,
-    WindowLimitError,
+    GateLimitError,
+    SpecialCallGateError,
 )
-from sliding_window.storages.base_storage import BaseWindowStorage, _mute
-from sliding_window.storages.simple import SimpleWindowStorage
-from sliding_window.typings import (
+from call_gate.storages.base_storage import BaseStorage, _mute
+from call_gate.storages.simple import SimpleStorage
+from call_gate.typings import (
     Frame,
+    GateState,
+    GateStorageModeType,
+    GateStorageType,
     Sentinel,
-    WindowState,
-    WindowStorageModeType,
-    WindowStorageType,
 )
 
 
@@ -69,14 +69,14 @@ def dual(sync_func: Callable) -> Callable:
 
     @wraps(sync_func)
     def wrapper(
-        self: "SlidingWindow", *args: Any, **kwargs: Any
+        self: "CallGate", *args: Any, **kwargs: Any
     ) -> Union[Coroutine[Any, Any, None], Callable[[Any, ...], Any]]:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
 
-        async def async_inner(self: "SlidingWindow", *args: Any, **kwargs: Any) -> None:
+        async def async_inner(self: "CallGate", *args: Any, **kwargs: Any) -> None:
             if self._alock is None:
                 self._alock = asyncio.Lock()
             async with self._alock:
@@ -90,36 +90,36 @@ def dual(sync_func: Callable) -> Callable:
     return wrapper
 
 
-class SlidingWindow:
-    """Sliding window time-bound counter.
+class CallGate:
+    """CallGate is a thread-safe, process-safe, coroutine-sage distributed time-bound rate limit counter.
 
-    Sliding window is divided into equal frames basing on the window size and frame step.
+    The gate is divided into equal frames basing on the gate size and frame step.
     Each frame is bound to the frame_step set frame step and keeps track of increments and decrements
     within a time period equal to the frame step. Values in the ``data[0]`` are always bound
     to the current granular time frame step. Tracking timestamp may be bound to a personalized timezone.
 
-    The window keeps only those values which are within the window bounds. The old values are removed
-    automatically when the window is full and the new frame period started.
+    The gate keeps only those values which are within the gate bounds. The old values are removed
+    automatically when the gate is full and the new frame period started.
 
-    The sum of the frames values increases while the window is not full. When it's full, the sum will
+    The sum of the frames values increases while the gate is not full. When it's full, the sum will
     decrease on each slide (due to erasing of the outdated frames) and increase again on each increment.
 
-    If the window was not used for a while and some (or all) frames are outdated and a new increment
+    If the gate was not used for a while and some (or all) frames are outdated and a new increment
     is made, the outdated frames will be replaced with the new period from the current moment
-    up to the last valid timestamp (if there is one). In other words, on increment the window always
+    up to the last valid timestamp (if there is one). In other words, on increment the gate always
     keeps frames from the current moment back to history, ordered by granular frame step without any gaps.
 
-    If any of window or frame limit is set and  any of these limits are exceeded, ``WindowLimitError``
+    If any of gate or frame limit is set and  any of these limits are exceeded, ``GateLimitError``
     or ``FrameLimitError`` (derived from ``ThrottlingError``) will be thrown.
     The error provides the information of the exceeded limit type and its value.
 
-    Also, the window may throw its own exceptions derived from ``SlidingWindowBaseError``. Each of them
+    Also, the gate may throw its own exceptions derived from ``CallGateBaseError``. Each of them
     also originates from Python typical native exceptions: ``ValueError``, ``TypeError``, ``ImportError``.
 
-    The window has 3 types of data storage:
-        - ``WindowStorageType.simple`` (default) - stores data in a ``collections.deque``.
+    The gate has 3 types of data storage:
+        - ``GateStorageType.simple`` (default) - stores data in a ``collections.deque``.
 
-        - ``WindowStorageType.shared`` (requires ``numpy``) - stores data in a NumPy array attached to
+        - ``GateStorageType.shared`` (requires ``numpy``) - stores data in a NumPy array attached to
         a ``multiprocessing.SharedMemory`` buffer that is shared between processes and threads started
         from one parent process/thread. Why numpy? Benchmarks of 10**6 (1 million) elements array write/read:
             1) numpy:           Write: 0.001528s, Read: 0.001265s
@@ -127,21 +127,21 @@ class SlidingWindow:
             3) cython:          Write: 0.067095s, Read: 0.080463s
 
 
-        - ``WindowStorageType.redis`` (requires ``redis`` (``redis-py``)- stores data in Redis,
+        - ``GateStorageType.redis`` (requires ``redis`` (``redis-py``) - stores data in Redis,
           what provides a distributed storage between multiple processes, servers and Docker containers.
 
-    Window constructor accepts ``**kwargs`` for ``WindowStorageType.redis`` storage. The parameters described
+    gate constructor accepts ``**kwargs`` for ``GateStorageType.redis`` storage. The parameters described
     at https://redis.readthedocs.io/en/latest/connections.html for ``redis.Redis`` object can be passed
-    as keyword arguments. Redis URL is not supported. If not provided, the Window will use the default
+    as keyword arguments. Redis URL is not supported. If not provided, the gate will use the default
     connection parameters, except the ``db``, which is set to ``15``.
 
-    :param name: Window name
-    :param window_size: The total size of the window (as a timedelta or number of seconds).
-    :param frame_step: The granularity of each frame in the window (either as a timedelta or seconds).
-    :param window_limit: Maximum allowed sum of values across the window, default is ``0`` (no limit).
-    :param frame_limit: Maximum allowed value per frame in the window, default is ``0`` (no limit).
+    :param name: gate name
+    :param gate_size: The total size of the gate (as a timedelta or number of seconds).
+    :param frame_step: The granularity of each frame in the gate (either as a timedelta or seconds).
+    :param gate_limit: Maximum allowed sum of values across the gate, default is ``0`` (no limit).
+    :param frame_limit: Maximum allowed value per frame in the gate, default is ``0`` (no limit).
     :param timezone: Timezone name ("Europe/Rome") for handling frames timestamp, default is ``UTC``.
-    :param storage: Type of data storage: one of WindowStorageType keys, default is ``WindowStorageType.simple``.
+    :param storage: Type of data storage: one of GateStorageType keys, default is ``GateStorageType.simple``.
     :param kwargs: Special parameters for storage.
     """
 
@@ -150,76 +150,76 @@ class SlidingWindow:
         return value is not None and not isinstance(value, bool) and isinstance(value, int)
 
     @staticmethod
-    def _validate_and_set_window_and_granularity(window_size: Any, step: Any) -> tuple[timedelta, timedelta]:
-        # If window_size is an int or float, convert it to a timedelta using seconds.
-        if isinstance(window_size, (int, float)):
-            window_size = timedelta(seconds=window_size)
+    def _validate_and_set_gate_and_granularity(gate_size: Any, step: Any) -> tuple[timedelta, timedelta]:
+        # If gate_size is an int or float, convert it to a timedelta using seconds.
+        if isinstance(gate_size, (int, float)):
+            gate_size = timedelta(seconds=gate_size)
         # Similarly, if step is an int or float, convert it to a timedelta using seconds.
         if isinstance(step, (int, float)):
             step = timedelta(seconds=step)
-        # Check that the step is less than the window size.
-        if step >= window_size:
-            raise SlidingWindowValueError("The frame step must be less than the window size.")
+        # Check that the step is less than the gate size.
+        if step >= gate_size:
+            raise CallGateValueError("The frame step must be less than the gate size.")
 
         win_k = 0
         gran_k = 0
-        # Determine the number of decimal places in window_size if it is not an integer number of seconds.
-        if not window_size.total_seconds().is_integer():
-            win_k = len(str(window_size.total_seconds()).split(".")[-1]) + 1
+        # Determine the number of decimal places in gate_size if it is not an integer number of seconds.
+        if not gate_size.total_seconds().is_integer():
+            win_k = len(str(gate_size.total_seconds()).split(".")[-1]) + 1
         # Determine the number of decimal places in step if it is not an integer number of seconds.
         if not step.total_seconds().is_integer():
             gran_k = len(str(step.total_seconds()).split(".")[-1]) + 1
         # If there is any fractional part, scale the values to avoid floating point precision issues.
         if win_k or gran_k:
             k = 10 ** max(win_k, gran_k)
-            win = window_size.total_seconds() * k
+            win = gate_size.total_seconds() * k
             gran = step.total_seconds() * k
         else:
-            win = window_size.total_seconds()
+            win = gate_size.total_seconds()
             gran = step.total_seconds()
 
-        # Check that the window is evenly divisible by the step.
+        # Check that the gate is evenly divisible by the step.
         if win % gran:
-            raise SlidingWindowValueError("Window must be divisible by frame step without remainder.")
+            raise CallGateValueError("gate must be divisible by frame step without remainder.")
 
-        return window_size, step
+        return gate_size, step
 
     @staticmethod
     def _validate_and_set_timezone(timezone: Any) -> ZoneInfo:
         return ZoneInfo(timezone)
 
-    def _validate_and_set_limits(self, window_limit: Any, frame_limit: Any) -> tuple[int, int]:
-        if not all(self._is_int(val) for val in (window_limit, frame_limit)):
-            raise SlidingWindowTypeError("Limits must be integers.")
-        if not all(val >= 0 for val in (window_limit, frame_limit)):
-            raise SlidingWindowValueError("Limits must be positive integers or 0.")
-        if 0 < window_limit < frame_limit:
-            raise SlidingWindowValueError("Frame limit can not exceed window limit if both of them are above 0.")
-        return window_limit, frame_limit
+    def _validate_and_set_limits(self, gate_limit: Any, frame_limit: Any) -> tuple[int, int]:
+        if not all(self._is_int(val) for val in (gate_limit, frame_limit)):
+            raise CallGateTypeError("Limits must be integers.")
+        if not all(val >= 0 for val in (gate_limit, frame_limit)):
+            raise CallGateValueError("Limits must be positive integers or 0.")
+        if 0 < gate_limit < frame_limit:
+            raise CallGateValueError("Frame limit can not exceed gate limit if both of them are above 0.")
+        return gate_limit, frame_limit
 
     @staticmethod
     def _validate_and_set_timestamp(timestamp: Any) -> Optional[datetime]:
         if timestamp is not None:
             if not isinstance(timestamp, str):
-                raise SlidingWindowTypeError(f"Timestamp must be an ISO string, received type: {type(timestamp)}.")
+                raise CallGateTypeError(f"Timestamp must be an ISO string, received type: {type(timestamp)}.")
             try:
                 if "Z" in timestamp:
                     timestamp = timestamp.replace("Z", "+00:00")
                 return datetime.fromisoformat(timestamp)
             except ValueError as e:
-                raise SlidingWindowValueError("Timestamp must be an ISO string.") from e
+                raise CallGateValueError("Timestamp must be an ISO string.") from e
         return None
 
     def __init__(
         self,
         name: str,
-        window_size: Union[timedelta, int, float],
+        gate_size: Union[timedelta, int, float],
         frame_step: Union[timedelta, int, float],
         *,
-        window_limit: int = 0,
+        gate_limit: int = 0,
         frame_limit: int = 0,
         timezone: str = "UTC",
-        storage: WindowStorageModeType = WindowStorageType.simple,
+        storage: GateStorageModeType = GateStorageType.simple,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
         **kwargs: dict[str, Any],
@@ -229,56 +229,56 @@ class SlidingWindow:
         self._alock: Optional[asyncio.Lock] = None
         self._name = name
         self._timezone: ZoneInfo = self._validate_and_set_timezone(timezone)
-        self._window_size, self._frame_step = self._validate_and_set_window_and_granularity(window_size, frame_step)
-        self._window_limit, self._frame_limit = self._validate_and_set_limits(window_limit, frame_limit)
-        self._frames: int = int(self._window_size // self._frame_step)
+        self._gate_size, self._frame_step = self._validate_and_set_gate_and_granularity(gate_size, frame_step)
+        self._gate_limit, self._frame_limit = self._validate_and_set_limits(gate_limit, frame_limit)
+        self._frames: int = int(self._gate_size // self._frame_step)
         self._current_dt: datetime = self._validate_and_set_timestamp(_current_dt)
         self._kwargs = kwargs
 
-        storage_err = ValueError("Invalid `storage`: window storage storage must be one of `WindowStorageType` values.")
-        if not isinstance(storage, (str, WindowStorageType)):
+        storage_err = ValueError("Invalid `storage`: gate storage must be one of `GateStorageType` values.")
+        if not isinstance(storage, (str, GateStorageType)):
             raise storage_err
 
         if isinstance(storage, str):
             try:
-                storage = WindowStorageType[storage]
+                storage = GateStorageType[storage]
             except KeyError as e:
                 raise storage_err from e
 
-        if storage == WindowStorageType.simple:
-            storage_type = SimpleWindowStorage
+        if storage == GateStorageType.simple:
+            storage_type = SimpleStorage
 
-        elif storage == WindowStorageType.shared:
+        elif storage == GateStorageType.shared:
             if np is Sentinel:
-                raise SlidingWindowImportError(
-                    "Package `numpy` is not installed. Please, install it manually to use big numbers in shared memory"
+                raise CallGateImportError(
+                    "Package `numpy` is not installed. Please, install it manually to use the shared memory storage "
                     "or set storage to `simple' or `shared`."
                 )
-            from sliding_window.storages.shared import SharedMemoryWindowStorage
+            from call_gate.storages.shared import SharedMemoryStorage
 
-            storage_type = SharedMemoryWindowStorage
+            storage_type = SharedMemoryStorage
 
-        elif storage == WindowStorageType.redis:
+        elif storage == GateStorageType.redis:
             if redis is Sentinel:
-                raise SlidingWindowImportError(
+                raise CallGateImportError(
                     "Package `redis` (`redis-py`) is not installed. Please, install it manually to use Redis storage "
                     "or set storage to `simple' or `shared`."
                 )
-            from sliding_window.storages.redis import RedisWindowStorage
+            from call_gate.storages.redis import RedisStorage
 
-            storage_type = RedisWindowStorage
+            storage_type = RedisStorage
 
         else:
             raise storage_err
 
-        self._storage: WindowStorageType = storage
+        self._storage: GateStorageType = storage
         with self._lock:
             kw: dict[str, Any] = {"name": name, "capacity": self._frames}
             if _data:
                 kw.update({"data": _data})
             if kwargs:
                 kw.update(kwargs)
-            self._data: BaseWindowStorage = storage_type(**kw)
+            self._data: BaseStorage = storage_type(**kw)
 
     def __del__(self) -> None:
         _mute(self.close)
@@ -302,30 +302,30 @@ class SlidingWindow:
 
     @dual
     def update(self, value: int = 1, throw: bool = False) -> None:
-        """Update the counter in the current frame and window sum.
+        """Update the counter in the current frame and gate sum.
 
-        It is possible to update the window with a custom **positive** value.
+        It is possible to update the gate with a custom **positive** value.
 
         Passing zero will do nothing.
 
-        Passing a negative value may raise a ``SlidingWindowOverflowError`` exception,
-        because neither the window sum nor the frame value can be negative.
+        Passing a negative value may raise a ``CallGateOverflowError`` exception,
+        because neither the gate sum nor the frame value can be negative.
 
         :param value: The value to add to the current frame value.
         :param throw: If True, the method will raise an exception if the limit is exceeded.
         """
         if not self._is_int(value):
-            raise SlidingWindowTypeError("Value must be an integer.")
+            raise CallGateTypeError("Value must be an integer.")
         if value == 0:
             return  # return early as there's nothing to do
 
         with self._rlock:
             self._refresh_frames()
             try:
-                self._data.atomic_update(value, self._frame_limit, self._window_limit)
+                self._data.atomic_update(value, self._frame_limit, self._gate_limit)
             except Exception as e:
                 if throw:
-                    if isinstance(e, SpecialSlidingWindowError):
+                    if isinstance(e, SpecialCallGateError):
                         raise e.__class__(e.message, self) from e
                     else:
                         raise e
@@ -333,24 +333,24 @@ class SlidingWindow:
                     while True:
                         self._refresh_frames()
                         try:
-                            self._data.atomic_update(value, self._frame_limit, self._window_limit)
+                            self._data.atomic_update(value, self._frame_limit, self._gate_limit)
                             break
                         except ThrottlingError:
                             time.sleep(self.frame_step.total_seconds())
 
     @property
     def name(self) -> str:
-        """Get window name."""
+        """Get gate name."""
         return self._name
 
     @property
-    def window_size(self) -> timedelta:
-        """Get the total window size as a timedelta."""
-        return self._window_size
+    def gate_size(self) -> timedelta:
+        """Get the total gate size as a timedelta."""
+        return self._gate_size
 
     @property
     def storage(self) -> str:
-        """Get window storage type."""
+        """Get gate storage type."""
         return self._storage.name
 
     @property
@@ -360,33 +360,33 @@ class SlidingWindow:
             return self._data.as_list()
 
     @property
-    def state(self) -> WindowState:
+    def state(self) -> GateState:
         """Get the current state of the storage."""
         return self._data.state
 
     @property
     def frame_step(self) -> timedelta:
-        """Get the step of the window frames as a timedelta."""
+        """Get the step of the gate frames as a timedelta."""
         return self._frame_step
 
     @property
     def frames(self) -> int:
-        """Get the number of frames in the window."""
+        """Get the number of frames in the gate."""
         return self._frames
 
     @property
     def limits(self) -> tuple[int, int]:
-        """Get window and frame limits in a tuple."""
-        return self._window_limit, self._frame_limit
+        """Get gate and frame limits in a tuple."""
+        return self._gate_limit, self._frame_limit
 
     @property
-    def window_limit(self) -> int:
-        """Get the maximum limit of the window."""
-        return self._window_limit
+    def gate_limit(self) -> int:
+        """Get the maximum limit of the gate."""
+        return self._gate_limit
 
     @property
     def frame_limit(self) -> int:
-        """Get the maximum value limit for each frame in the window."""
+        """Get the maximum value limit for each frame in the gate."""
         return self._frame_limit
 
     @property
@@ -401,7 +401,7 @@ class SlidingWindow:
 
     @property
     def sum(self) -> int:
-        """Get the sum of all values in the window."""
+        """Get the sum of all values in the gate."""
         with self._lock:
             return self._data.sum
 
@@ -422,7 +422,7 @@ class SlidingWindow:
     def check_limits(self) -> None:
         """Check if the total and cell limits are satisfied.
 
-        :raises ThrottlingError: Raised if either the `window_limit` or `frame_limit` is exceeded.
+        :raises ThrottlingError: Raised if either the `gate_limit` or `frame_limit` is exceeded.
         """
         sum_ = self.sum
         current_value = self.current_frame.value
@@ -430,29 +430,29 @@ class SlidingWindow:
             self._refresh_frames()
             if self._frame_limit and current_value >= self._frame_limit:
                 raise FrameLimitError(f"Frame limit is reached: {self._frame_limit}", self)
-            if self._window_limit and sum_ >= self._window_limit:
-                raise WindowLimitError(f"Window limit is reached: {self._window_limit}", self)
+            if self._gate_limit and sum_ >= self._gate_limit:
+                raise GateLimitError(f"gate limit is reached: {self._gate_limit}", self)
 
     def clean(self) -> None:
-        """Clean the window (make it empty).
+        """Clean the gate (make it empty).
 
-        Removes all counters and sets window sum to zero.
+        Removes all counters and sets gate sum to zero.
         """
         with self._lock:
             self._data.clear()
             self._current_dt = None
 
     def as_dict(self) -> dict:
-        """Serialize the window to a dictionary.
+        """Serialize the gate to a dictionary.
 
-        May be used for persisting the window state.
+        May be used for persisting the gate state.
         """
         with self._rlock:
             return {
                 "name": self.name,
-                "window_size": self.window_size.total_seconds(),
+                "gate_size": self.gate_size.total_seconds(),
                 "frame_step": self.frame_step.total_seconds(),
-                "window_limit": self.window_limit,
+                "gate_limit": self.gate_limit,
                 "frame_limit": self.frame_limit,
                 "timezone": self.timezone.key,
                 "storage": self.storage,
@@ -462,11 +462,11 @@ class SlidingWindow:
             }
 
     def close(self) -> None:
-        """Close the window."""
+        """Close the gate."""
         self._data.close()
 
     def __call__(self, value: int = 1, *, throw: bool = False) -> Callable[[Any], Callable[[Any, Any], Any]]:
-        """Window instance decorator for functions and coroutines.
+        """Gate instance decorator for functions and coroutines.
 
         :param value: The value to add to the current frame value.
         :param throw: If True, the method will raise an exception if the limit is exceeded.
@@ -495,11 +495,11 @@ class SlidingWindow:
         return decorator
 
     def __len__(self) -> int:
-        """Get current number of the sliding window existing frames."""
+        """Get current number of the gate existing frames."""
         return self._frames
 
     def __bool__(self) -> bool:
-        """Check if the window is empty (full of zeros) or not."""
+        """Check if the gate is empty (full of zeros) or not."""
         return bool(self._data)
 
     def __enter__(self, value: int = 1, *, throw: bool = False) -> Any:
@@ -519,31 +519,31 @@ class SlidingWindow:
         pass
 
     def __getstate__(self) -> dict[str, Any]:
-        """Get the state of the window as a dictionary."""
+        """Get the state of the gate as a dictionary."""
         return self.as_dict()
 
     def __reduce__(self) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
         """Reduce the instance to a tuple: (callable, args, state)."""
         return (
             self.__class__,
-            (self._name, self._window_size, self._frame_step),
+            (self._name, self._gate_size, self._frame_step),
             self.__getstate__(),
         )
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Set the state of the window from a dictionary.
+        """Set the state of the gate from a dictionary.
 
         :param state: The state dictionary.
         """
         # Restore main parameters
         self._name = state["name"]
-        self._window_size = timedelta(seconds=state["window_size"])
+        self._gate_size = timedelta(seconds=state["gate_size"])
         self._frame_step = timedelta(seconds=state["frame_step"])
-        self._window_limit = state["window_limit"]
+        self._gate_limit = state["gate_limit"]
         self._frame_limit = state["frame_limit"]
         self._timezone = ZoneInfo(state["timezone"])
-        self._storage = WindowStorageType[state["storage"]]
-        self._frames = int(self._window_size // self._frame_step)
+        self._storage = GateStorageType[state["storage"]]
+        self._frames = int(self._gate_size // self._frame_step)
         self._current_dt = datetime.fromisoformat(state["_current_dt"]) if state["_current_dt"] else None
         # Other additional parameters
         self._kwargs = {
@@ -552,9 +552,9 @@ class SlidingWindow:
             if k
             not in (
                 "name",
-                "window_size",
+                "gate_size",
                 "frame_step",
-                "window_limit",
+                "gate_limit",
                 "frame_limit",
                 "timezone",
                 "storage",
@@ -566,16 +566,16 @@ class SlidingWindow:
         self._lock = RLock()
 
         # Restore data storage depending on the mode.
-        if self._storage == WindowStorageType.simple:
-            storage = SimpleWindowStorage
-        elif self._storage == WindowStorageType.shared:
-            from sliding_window.storages.shared import SharedMemoryWindowStorage
+        if self._storage == GateStorageType.simple:
+            storage = SimpleStorage
+        elif self._storage == GateStorageType.shared:
+            from call_gate.storages.shared import SharedMemoryStorage
 
-            storage = SharedMemoryWindowStorage
-        elif self._storage == WindowStorageType.redis:
-            from sliding_window.storages.redis import RedisWindowStorage
+            storage = SharedMemoryStorage
+        elif self._storage == GateStorageType.redis:
+            from call_gate.storages.redis import RedisStorage
 
-            storage = RedisWindowStorage
+            storage = RedisStorage
         else:
             raise ValueError("Invalid storage storage during unpickling.")
 
@@ -589,12 +589,12 @@ class SlidingWindow:
         )
 
     def __repr__(self) -> str:
-        """Window representation."""
+        """Gate representation."""
         d = self.as_dict()
         d.pop("_data")
         d.pop("_current_dt")
         return f"{self.__class__.__name__}({', '.join(f'{k}={v}' for k, v in d.items())})"
 
     def __str__(self) -> str:
-        """Window string representation."""
+        """Gate string representation."""
         return str(self.state)

@@ -1,16 +1,16 @@
 """
-Redis-based window storage.
+Redis-based storage.
 
-This module contains a window storage implementation using Redis as the storage engine.
+This module contains a storage implementation using Redis as the storage engine.
 
 The storage is suitable for distributed applications. The storage uses a Redis list to store
-the window values. The Redis list is divided into frames which are accessed by the index of
+the gate values. The Redis list is divided into frames which are accessed by the index of
 the frame.
 
 The storage is thread-safe and process-safe for multiple readers and writers.
 
-The storage supports persistence of the window values. When the application is restarted,
-the window values are not lost.
+The storage supports persistence of the gate values. When the application is restarted,
+the gate values are not lost.
 """
 
 import time
@@ -23,10 +23,10 @@ from typing import Any, Optional
 from redis import Redis, ResponseError
 from typing_extensions import Unpack
 
-from sliding_window import FrameLimitError, WindowLimitError
-from sliding_window.errors import FrameOverflowError, WindowOverflowError
-from sliding_window.storages.base_storage import BaseWindowStorage, _mute
-from sliding_window.typings import WindowState
+from call_gate import FrameLimitError, GateLimitError
+from call_gate.errors import FrameOverflowError, GateOverflowError
+from call_gate.storages.base_storage import BaseStorage, _mute
+from call_gate.typings import GateState
 
 
 class RedisReentrantLock:
@@ -77,35 +77,35 @@ class RedisReentrantLock:
             self.client.expire(self.owner_key, self.timeout)
 
 
-class RedisWindowStorage(BaseWindowStorage):
-    """Redis-based window storage.
+class RedisStorage(BaseStorage):
+    """Redis-based storage.
 
-    This module contains a window storage implementation using Redis as the storage engine.
+    This module contains a storage implementation using Redis as the storage engine.
 
     The storage is suitable for distributed applications. The storage uses a Redis list to store
-    the window values. The Redis list is divided into frames which are accessed by the index of
+    the gate values. The Redis list is divided into frames which are accessed by the index of
     the frame.
 
     The storage is thread-safe and process-safe for multiple readers and writers.
 
-    The storage supports persistence of the window values. When the application is restarted,
-    the window values are not lost.
-    :param name: The name of the window.
-    :param capacity: The maximum number of values that the window can store.
-    :param data: Optional initial data for the window.
+    The storage supports persistence of the gate values. When the application is restarted,
+    the gate values are not lost.
+    :param name: The name of the gate.
+    :param capacity: The maximum number of values that the storage can store.
+    :param data: Optional initial data for the storage.
     """
 
     _data: str  # Redis key for our list
-    _sum: str  # Redis key for the sum of the window
+    _sum: str  # Redis key for the sum of the storage
 
     def __init__(
         self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
     ) -> None:
         """
-        Initialize the RedisWindowStorage.
+        Initialize the RedisStorage.
 
-        :param name: Name of the sliding window.
-        :param capacity: The capacity of the window.
+        :param name: Name of the gate.
+        :param capacity: The capacity of the storage.
         :param data: Optional initial list of integers.
         :param kwargs: Additional keyword arguments for Redis connection.
         """
@@ -167,9 +167,9 @@ class RedisWindowStorage(BaseWindowStorage):
 
     @property
     def sum(self) -> int:
-        """Property to get the current sum of the window from Redis.
+        """Property to get the current sum of the storage from Redis.
 
-        :return: The sum of the window.
+        :return: The sum of the storage.
         """
         with self._redis_global_lock:
             with self._lock:
@@ -177,7 +177,7 @@ class RedisWindowStorage(BaseWindowStorage):
                 return int(s) if s is not None else 0
 
     @property
-    def state(self) -> WindowState:
+    def state(self) -> GateState:
         """Get the current state of the storage."""
         # fmt: off
         lua_script = """
@@ -202,14 +202,14 @@ class RedisWindowStorage(BaseWindowStorage):
         with self._redis_global_lock:
             with self._lock:
                 data, sum_ = self._shm.eval(lua_script, 2, self._data, self._sum)
-                return WindowState(data=data, sum=sum_)
+                return GateState(data=data, sum=sum_)
 
     def slide(self, n: int) -> None:
-        """Shift the window to the right by n frames.
+        """Slide the storage to the right by n frames.
 
         This operation removes the last n elements (discarding their values)
         and prepends n zeros at the beginning, automatically recalculating
-        and updating the window's sum.
+        and updating the storage's sum.
 
         :param n: The number of frames to slide.
         """
@@ -234,9 +234,9 @@ class RedisWindowStorage(BaseWindowStorage):
                 self._shm.eval(lua_script, 2, self._data, self._sum, str(n))
 
     def as_list(self) -> list[int]:
-        """Get the current sliding window as a list of integers.
+        """Get the current sliding storage as a list of integers.
 
-        :return: List of window values.
+        :return: List of storage values.
         """
         with self._redis_global_lock:
             with self._lock:
@@ -244,7 +244,7 @@ class RedisWindowStorage(BaseWindowStorage):
                 return [int(x) for x in lst]
 
     def clear(self) -> None:
-        """Clear the sliding window by resetting all elements to zero."""
+        """Clear the sliding storage by resetting all elements to zero."""
         with self._redis_global_lock:
             with self._lock:
                 self._shm.delete(self._data)
@@ -257,21 +257,21 @@ class RedisWindowStorage(BaseWindowStorage):
             with self._lock:
                 _mute(self._shm.close())
 
-    def atomic_update(self, value: int, frame_limit: int, window_limit: int) -> None:
-        """Atomically update the value of the most recent frame and the window sum.
+    def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
+        """Atomically update the value of the most recent frame and the storage sum.
 
-        If the new value of the most recent frame or the window sum exceeds the corresponding limit,
-        the method raises a FrameLimitError or WindowLimitError exception.
+        If the new value of the most recent frame or the storage sum exceeds the corresponding limit,
+        the method raises a FrameLimitError or GateLimitError exception.
 
-        If the new value of the most recent frame or the window sum is less than 0,
-        the method raises a SlidingWindowOverflowError exception.
+        If the new value of the most recent frame or the storage sum is less than 0,
+        the method raises a CallGateOverflowError exception.
 
         :param value: The value to add to the most recent frame value.
         :param frame_limit: The maximum allowed value of the most recent frame.
-        :param window_limit: The maximum allowed value of the window sum.
+        :param gate_limit: The maximum allowed value of the storage sum.
         :raises FrameLimitError: If the new value of the most recent frame exceeds the frame limit.
-        :raises WindowLimitError: If the new value of the window sum exceeds the window limit.
-        :raises SlidingWindowOverflowError: If the new value of the most recent frame or the window sum is less than 0.
+        :raises GateLimitError: If the new value of the storage sum exceeds the gate limit.
+        :raises CallGateOverflowError: If the new value of the most recent frame or the storage sum is less than 0.
         :return: The new value of the most recent frame.
         """
         lua_script = """
@@ -279,7 +279,7 @@ class RedisWindowStorage(BaseWindowStorage):
         local key_sum = KEYS[2]
         local inc_value = tonumber(ARGV[1])
         local frame_limit = tonumber(ARGV[2])
-        local window_limit = tonumber(ARGV[3])
+        local gate_limit = tonumber(ARGV[3])
         local current_value = tonumber(redis.call("LINDEX", key_list, 0) or "0")
         local new_value = current_value + inc_value
         local current_sum = tonumber(redis.call("GET", key_sum) or "0")
@@ -290,33 +290,33 @@ class RedisWindowStorage(BaseWindowStorage):
         if new_value < 0 then
           return {err="frame overflow"}
         end
-        if window_limit > 0 and new_sum > window_limit then
-          return {err="window limit exceeded"}
+        if gate_limit > 0 and new_sum > gate_limit then
+          return {err="Gate limit exceeded"}
         end
         if new_sum < 0 then
-          return {err="window overflow"}
+          return {err="Gate overflow"}
         end
         redis.call("LSET", key_list, 0, new_value)
         redis.call("SET", key_sum, new_sum)
         return new_value
         """
         try:
-            self._shm.eval(lua_script, 2, self._data, self._sum, str(value), str(frame_limit), str(window_limit))
+            self._shm.eval(lua_script, 2, self._data, self._sum, str(value), str(frame_limit), str(gate_limit))
         except ResponseError as e:
             error_message = str(e)
             if "frame limit exceeded" in error_message:
                 raise FrameLimitError("Frame limit exceeded") from e
-            elif "window limit exceeded" in error_message:
-                raise WindowLimitError("Window limit exceeded") from e
-            elif "window overflow" in error_message:
-                raise WindowOverflowError("Window sum value must be >= 0.") from e
+            elif "Gate limit exceeded" in error_message:
+                raise GateLimitError("Gate limit exceeded") from e
+            elif "Gate overflow" in error_message:
+                raise GateOverflowError("Gate sum value must be >= 0.") from e
             elif "frame overflow" in error_message:
                 raise FrameOverflowError("Frame value must be >= 0.") from e
             else:
                 raise e
 
     def __getitem__(self, index: int) -> int:
-        """Get the element at the specified index from the sliding window.
+        """Get the element at the specified index from the storage.
 
         :param index: The index of the element.
         :return: The integer value at the specified index.

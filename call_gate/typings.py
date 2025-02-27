@@ -27,20 +27,20 @@ if TYPE_CHECKING:
         NDArray = Sentinel
 
 
-class WindowState(NamedTuple):
-    """Representation of a window storage state.
+class GateState(NamedTuple):
+    """Representation of a gate storage state.
 
     Properties:
-     - data: list of window values
-     - sum: sum of window values
+     - data: list of gate values
+     - sum: sum of gate values
     """
 
     data: list
     sum: int
 
 
-class WindowStorageType(IntEnum):
-    """Window storage type.
+class GateStorageType(IntEnum):
+    """gate storage type.
 
     - simple: simple in-memory storage (``collections.deque``)
     - shared: ``multiprocessing.ShareableList`` (can not contain integers higher than 2**64-1)
@@ -53,7 +53,7 @@ class WindowStorageType(IntEnum):
 
 
 class Frame(NamedTuple):
-    """Representation of a window frame.
+    """Representation of a gate frame.
 
     Properties:
      - dt: frame datetime
@@ -93,4 +93,4 @@ class AsyncLockProtocol(Protocol):  # noqa: D101
 
 LockType = Union[LockProtocol, AsyncLockProtocol]
 StorageType = Union[MutableSequence, ShareableList, "NDArray", str]
-WindowStorageModeType = Union[WindowStorageType, Literal["simple", "shared", "redis"]]
+GateStorageModeType = Union[GateStorageType, Literal["simple", "shared", "redis"]]

@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "sliding-window"
+name = "call-gate"
 version = "0.0.0"
-description = "Sliding Window - Rate Limit Counter"
+description = "CallGate Rate Limiter for Python"
 authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
 readme = "README.md"
 license = "MIT"
@@ -78,7 +78,7 @@ doc8 = "^0.11.2"
 target-version = "py39"
 line-length = 120
 extend-exclude = [".idea", ".vscode", ".fleet", "tests/"]
-src = ["sliding_window"]
+src = ["call_gate"]
 
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
@@ -107,11 +107,6 @@ ignore = [
   "D105",
   "D107",
   "S112",
-#  "S104",
-#  "PLR2004"
-#  "TC001",
-#  "TC002",
-#  "UP040",
 ]
 
 # https://docs.astral.sh/ruff/settings/#extend-per-file-ignores
@@ -149,7 +144,7 @@ section-order = [
     'first-party',
     'local-folder',
 ]
-known-first-party = ["sliding_window"]
+known-first-party = ["call_gate"]
 lines-after-imports = 2
 lines-between-types = 1
 
@@ -212,11 +207,11 @@ testpaths = "./tests"
 #log_cli_level = "ERROR"
 show_capture = "no"
 
-pythonpath = ["./sliding_window", "./.venv", "./venv"]
+pythonpath = ["./call_gate", "./.venv", "./venv"]
 filterwarnings = ["ignore::UserWarning", 'ignore::DeprecationWarning', "ignore::ResourceWarning"]
 
 [tool.coverage.run]  # coverage
-source = ["sliding_window"]
+source = ["call_gate"]
 branch = true
 omit = [
   "*/__init__.py",

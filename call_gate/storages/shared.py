@@ -1,14 +1,14 @@
 """
-Shared in-memory window storage implementation using multiprocessing shared memory.
+Shared in-memory storage implementation using multiprocessing shared memory.
 
 This storage is suitable for multiprocess applications. The storage uses a numpy
-array in shared memory to store the values of the window. The array is divided into
+array in shared memory to store the values of the gate. The array is divided into
 frames which are accessed by the index of the frame.
 
 The storage is thread-safe and process-safe for multiple readers and writers.
 
-The storage does not support persistence of the window values. When the application
-is restarted, the window values are lost.
+The storage does not support persistence of the gate values. When the application
+is restarted, the gate values are lost.
 """
 
 import fcntl
@@ -23,10 +23,10 @@ import numpy as np
 
 from typing_extensions import Unpack
 
-from sliding_window import FrameLimitError, WindowLimitError
-from sliding_window.errors import FrameOverflowError, WindowOverflowError
-from sliding_window.storages.base_storage import BaseWindowStorage, _mute
-from sliding_window.typings import WindowState
+from call_gate import FrameLimitError, GateLimitError
+from call_gate.errors import FrameOverflowError, GateOverflowError
+from call_gate.storages.base_storage import BaseStorage, _mute
+from call_gate.typings import GateState
 
 
 if TYPE_CHECKING:
@@ -74,21 +74,21 @@ class GlobalLock:
         self.release()
 
 
-class SharedMemoryWindowStorage(BaseWindowStorage):
-    """Shared in-memory window storage implementation using multiprocessing shared memory.
+class SharedMemoryStorage(BaseStorage):
+    """Shared in-memory storage implementation using multiprocessing shared memory.
 
     This storage is suitable for multiprocess applications. The storage uses a numpy
-    array in shared memory to store the values of the window. The array is divided into
+    array in shared memory to store the values of the gate. The array is divided into
     frames which are accessed by the index of the frame.
 
     The storage is thread-safe and process-safe for multiple readers and writers.
 
-    The storage does not support persistence of the window values. When the application
-    is restarted, the window values are lost.
+    The storage does not support persistence of the gate values. When the application
+    is restarted, the gate values are lost.
 
-    :param name: The name of the window.
-    :param capacity: The maximum number of values that the window can store.
-    :param data: Optional initial data for the window.
+    :param name: The name of the gate.
+    :param capacity: The maximum number of values that the storage can store.
+    :param data: Optional initial data for the storage.
     """
 
     _dtype = np.uint64
@@ -132,11 +132,11 @@ class SharedMemoryWindowStorage(BaseWindowStorage):
                 return int(self._sum)
 
     @property
-    def state(self) -> WindowState:
+    def state(self) -> GateState:
         """Get the sum of all values in the storage."""
         with self._rlock:
             with self._lock:
-                return WindowState(data=self._data.tolist(), sum=int(self._sum))
+                return GateState(data=self._data.tolist(), sum=int(self._sum))
 
     def close(self) -> None:
         """Close storage memory segment."""
@@ -165,7 +165,7 @@ class SharedMemoryWindowStorage(BaseWindowStorage):
                 self._sum[...] = 0
 
     def slide(self, n: int) -> None:
-        """Slide window data to the right by n frames.
+        """Slide data to the right by n frames.
 
         The skipped frames are filled with zeros.
         :param n: The number of frames to slide
@@ -183,21 +183,21 @@ class SharedMemoryWindowStorage(BaseWindowStorage):
                     self._data[:n] = 0
                     self._set_sum()
 
-    def atomic_update(self, value: int, frame_limit: int, window_limit: int) -> None:
-        """Atomically update the value of the most recent frame and the window sum.
+    def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
+        """Atomically update the value of the most recent frame and the storage sum.
 
-        If the new value of the most recent frame or the window sum exceeds the corresponding limit,
-        the method raises a FrameLimitError or WindowLimitError exception.
+        If the new value of the most recent frame or the storage sum exceeds the corresponding limit,
+        the method raises a FrameLimitError or GateLimitError exception.
 
-        If the new value of the most recent frame or the window sum is less than 0,
-        the method raises a SlidingWindowOverflowError exception.
+        If the new value of the most recent frame or the storage sum is less than 0,
+        the method raises a CallGateOverflowError exception.
 
         :param value: The value to add to the most recent frame value.
         :param frame_limit: The maximum allowed value of the most recent frame.
-        :param window_limit: The maximum allowed value of the window sum.
+        :param gate_limit: The maximum allowed value of the storage sum.
         :raises FrameLimitError: If the new value of the most recent frame exceeds the frame limit.
-        :raises WindowLimitError: If the new value of the window sum exceeds the window limit.
-        :raises SlidingWindowOverflowError: If the new value of the most recent frame or the window sum is less than 0.
+        :raises GateLimitError: If the new value of the storage sum exceeds the gate limit.
+        :raises CallGateOverflowError: If the new value of the most recent frame or the storage sum is less than 0.
         :return: The new value of the most recent frame.
         """
         with self._rlock:
@@ -209,10 +209,10 @@ class SharedMemoryWindowStorage(BaseWindowStorage):
 
                 if 0 < frame_limit < new_value:
                     raise FrameLimitError("Frame limit exceeded")
-                if 0 < window_limit < new_sum:
-                    raise WindowLimitError("Window limit exceeded")
+                if 0 < gate_limit < new_sum:
+                    raise GateLimitError("Gate limit exceeded")
                 if new_sum < 0:
-                    raise WindowOverflowError("Window sum value must be >= 0.")
+                    raise GateOverflowError("Gate sum value must be >= 0.")
                 if new_value < 0:
                     raise FrameOverflowError("Frame value must be >= 0.")
 
