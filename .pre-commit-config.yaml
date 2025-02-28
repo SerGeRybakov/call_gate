@@ -1,6 +1,6 @@
 # https://pre-commit.com/
 
-default_stages: [ commit, push ]
+default_stages: [ pre-commit, pre-push ]
 default_language_version:
   python: python3.9
 
@@ -71,7 +71,7 @@ repos:
         entry: ssort
         always_run: true
         stages:
-          - commit
+          - pre-commit
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.8
@@ -93,7 +93,7 @@ repos:
         always_run: false
         args: [--config-file=pyproject.toml]
         stages:
-          - commit
+          - pre-commit
 
   - repo: local
     hooks:
@@ -105,4 +105,4 @@ repos:
         pass_filenames: false
         always_run: false
         stages:
-          - push
+          - pre-push
