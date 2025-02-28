@@ -29,7 +29,6 @@ from types import TracebackType
 from typing import Any, Callable, Optional, Union
 from zoneinfo import ZoneInfo
 
-from call_gate import ThrottlingError
 from call_gate.errors import (
     CallGateImportError,
     CallGateTypeError,
@@ -37,6 +36,7 @@ from call_gate.errors import (
     FrameLimitError,
     GateLimitError,
     SpecialCallGateError,
+    ThrottlingError,
 )
 from call_gate.storages.base_storage import BaseStorage, _mute
 from call_gate.storages.simple import SimpleStorage
@@ -60,14 +60,24 @@ except ImportError:
     redis = Sentinel
 
 
-def dual(sync_func: Callable) -> Callable:
+def dual(sync_method: Callable) -> Callable:
     """Make a method work both synchronously and asynchronously.
 
     If an event loop is already running, the method will execute in a thread pool,
     returning an awaitable object. Otherwise, the synchronous function is called directly.
+
+    class A:
+
+        @dual
+        def method():
+            ...
+
+    a = A()
+    a.method()
+    await a.method()
     """
 
-    @wraps(sync_func)
+    @wraps(sync_method)
     def wrapper(
         self: "CallGate", *args: Any, **kwargs: Any
     ) -> Union[Coroutine[Any, Any, None], Callable[[Any, ...], Any]]:
@@ -80,12 +90,12 @@ def dual(sync_func: Callable) -> Callable:
             if self._alock is None:
                 self._alock = asyncio.Lock()
             async with self._alock:
-                return await asyncio.to_thread(sync_func, self, *args, **kwargs)
+                return await asyncio.to_thread(sync_method, self, *args, **kwargs)
 
         if loop and loop.is_running():
             return async_inner(self, *args, **kwargs)
         else:
-            return sync_func(self, *args, **kwargs)
+            return sync_method(self, *args, **kwargs)
 
     return wrapper
 
@@ -140,7 +150,7 @@ class CallGate:
     :param frame_step: The granularity of each frame in the gate (either as a timedelta or seconds).
     :param gate_limit: Maximum allowed sum of values across the gate, default is ``0`` (no limit).
     :param frame_limit: Maximum allowed value per frame in the gate, default is ``0`` (no limit).
-    :param timezone: Timezone name ("Europe/Rome") for handling frames timestamp, default is ``UTC``.
+    :param timezone: Timezone name ("UTC", "Europe/Rome") for handling frames timestamp, default is ``None``.
     :param storage: Type of data storage: one of GateStorageType keys, default is ``GateStorageType.simple``.
     :param kwargs: Special parameters for storage.
     """
@@ -185,8 +195,10 @@ class CallGate:
         return gate_size, step
 
     @staticmethod
-    def _validate_and_set_timezone(timezone: Any) -> ZoneInfo:
-        return ZoneInfo(timezone)
+    def _validate_and_set_timezone(tz_name: str) -> Optional[ZoneInfo]:
+        if tz_name is Sentinel:
+            return None
+        return ZoneInfo(tz_name)
 
     def _validate_and_set_limits(self, gate_limit: Any, frame_limit: Any) -> tuple[int, int]:
         if not all(self._is_int(val) for val in (gate_limit, frame_limit)):
@@ -218,7 +230,7 @@ class CallGate:
         *,
         gate_limit: int = 0,
         frame_limit: int = 0,
-        timezone: str = "UTC",
+        timezone: str = Sentinel,
         storage: GateStorageModeType = GateStorageType.simple,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
@@ -228,7 +240,7 @@ class CallGate:
         self._rlock = RLock()
         self._alock: Optional[asyncio.Lock] = None
         self._name = name
-        self._timezone: ZoneInfo = self._validate_and_set_timezone(timezone)
+        self._timezone: Optional[ZoneInfo] = self._validate_and_set_timezone(timezone)
         self._gate_size, self._frame_step = self._validate_and_set_gate_and_granularity(gate_size, frame_step)
         self._gate_limit, self._frame_limit = self._validate_and_set_limits(gate_limit, frame_limit)
         self._frames: int = int(self._gate_size // self._frame_step)
@@ -390,7 +402,7 @@ class CallGate:
         return self._frame_limit
 
     @property
-    def timezone(self) -> ZoneInfo:
+    def timezone(self) -> Optional[ZoneInfo]:
         """Get the timezone used for datetime observing."""
         return self._timezone
 
@@ -454,7 +466,7 @@ class CallGate:
                 "frame_step": self.frame_step.total_seconds(),
                 "gate_limit": self.gate_limit,
                 "frame_limit": self.frame_limit,
-                "timezone": self.timezone.key,
+                "timezone": self.timezone.key if self.timezone else None,
                 "storage": self.storage,
                 "_data": self.data,
                 "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
@@ -541,7 +553,7 @@ class CallGate:
         self._frame_step = timedelta(seconds=state["frame_step"])
         self._gate_limit = state["gate_limit"]
         self._frame_limit = state["frame_limit"]
-        self._timezone = ZoneInfo(state["timezone"])
+        self._timezone = ZoneInfo(state["timezone"]) if state["timezone"] else None
         self._storage = GateStorageType[state["storage"]]
         self._frames = int(self._gate_size // self._frame_step)
         self._current_dt = datetime.fromisoformat(state["_current_dt"]) if state["_current_dt"] else None

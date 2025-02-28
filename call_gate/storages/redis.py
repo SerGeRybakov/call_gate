@@ -49,7 +49,7 @@ class RedisReentrantLock:
         while True:
             current_owner = self.client.get(self.owner_key)
             # If the lock is already acquired by the current owner, just increment the counter and extend the TTL.
-            if current_owner and current_owner.decode() == self.owner:
+            if current_owner == self.owner:
                 self.client.hincrby(self.count_key, self.owner, 1)
                 self.client.expire(self.lock_key, self.timeout)
                 self.client.expire(self.owner_key, self.timeout)
@@ -114,7 +114,7 @@ class RedisStorage(BaseStorage):
             kwargs["db"] = 15
         self._data = self.name  # key for list
         self._sum = f"{self.name}:sum"  # key for the sum
-        self._shm: Redis = Redis(**kwargs)
+        self._shm: Redis = Redis(**kwargs, decode_responses=True)
         self._lock = self._shm.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
         self._rlock = RLock()
         self._redis_global_lock = RedisReentrantLock(self._shm, self.name)
@@ -187,16 +187,19 @@ class RedisStorage(BaseStorage):
         local data = redis.call("LRANGE", key_list, 0, -1)
         -- Retrieve the stored sum (if the key does not exist, default to 0)
         local stored_sum = tonumber(redis.call("GET", key_sum) or "0")
-        -- Calculate the sum of the list elements
+        -- Calculate the sum of the list elements and convert them to numbers
         local calculated_sum = 0
+        local numeric_data = {}
         for i, v in ipairs(data) do
-            calculated_sum = calculated_sum + tonumber(v)
+            local num = tonumber(v)
+            numeric_data[i] = num
+            calculated_sum = calculated_sum + num
         end
         -- If the sums do not match, return an error
         if calculated_sum ~= stored_sum then
             return {err="Sum mismatch: calculated sum (" .. calculated_sum .. ") does not equal stored sum (" .. stored_sum .. ")"}
         end
-        return {data, stored_sum}
+        return {numeric_data, stored_sum}
         """  # noqa: E501
         # fmt: on
         with self._redis_global_lock:
@@ -255,7 +258,7 @@ class RedisStorage(BaseStorage):
         """Close the Redis connection and associated resources."""
         with self._redis_global_lock:
             with self._lock:
-                _mute(self._shm.close())
+                _mute(self._shm.close)
 
     def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
         """Atomically update the value of the most recent frame and the storage sum.
