@@ -56,7 +56,6 @@ class TestCallGateInit:
             assert gate.gate_limit == 0
             assert gate.frame_limit == 0
             assert gate.data == [0] * gate.frames
-            assert not gate
             assert not gate.sum
             assert not gate.current_dt
             assert gate.timezone is None

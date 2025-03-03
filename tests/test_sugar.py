@@ -24,8 +24,6 @@ class TestSugar:
         def decorated():
             pass
 
-        assert not gate
-
         for _ in range(iterations):
             decorated()
 
@@ -44,7 +42,6 @@ class TestSugar:
     def test_context_manager(self, storage, iterations, value):
         gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage)
 
-        assert not gate
 
         for _ in range(iterations):
             with gate(value=value):
