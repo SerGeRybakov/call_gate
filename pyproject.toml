@@ -3,7 +3,7 @@ name = "call-gate"
 version = "0.0.0"
 description = "CallGate Rate Limiter for Python"
 authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
-readme = "README.md"
+readme = "README.rst"
 license = "MIT"
 classifiers = [
   "Development Status :: 4 - Beta",
