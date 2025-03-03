@@ -1,0 +1,81 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install poetry
+        uses: snok/install-poetry@v1.3.4
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Check code style and type checks
+        run: |
+          source .venv/bin/activate
+          ssort ./call_gate
+          ruff format ./call_gate
+          ruff check ./call_gate --diff
+          mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
+
+      - name: Set up Docker Compose
+        run: docker compose version
+
+      - name: Start services
+        run: docker compose up -d
+
+      - name: Wait for Redis to be ready
+        run: |
+          for i in {1..10}; do
+            if docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; then
+              echo "Redis is ready!"
+              exit 0
+            fi
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+          echo "Redis did not start in time" && exit 1
+
+      - name: Run tests
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          source .venv/bin/activate
+          coverage run -m pytest --cov=call_gate
+          coverage report
+
+      - name: Stop services
+        if: always()
+        run: docker compose down
