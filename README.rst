@@ -68,6 +68,7 @@ Setting Limits
 ~~~~~~~~~~~~~~
 
 Basically, the gate has two limits:
+
 - ``gate_limit``: how many values can be in the whole gate
 - ``frame_limit``: granular limit for each frame in the gate.
 
