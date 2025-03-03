@@ -16,12 +16,14 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Используем измерение операционной системы из матрицы
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
         os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,21 +44,24 @@ jobs:
         run: poetry install
 
       - name: Check code style and type checks
+        # Для совместимости с Windows используем условную активацию виртуального окружения
         run: |
-          source .venv/bin/activate
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            .\.venv\Scripts\activate
+          else
+            source .venv/bin/activate
+          fi
           ssort ./call_gate
           ruff format ./call_gate
           ruff check ./call_gate --diff
           mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
+        shell: bash
 
-      - name: Set up Docker Compose
-        run: docker compose version
-
-      - name: Start services
-        run: docker compose up -d
-
-      - name: Wait for Redis to be ready
+      - name: Docker Compose steps (Linux/Mac only)
+        if: ${{ runner.os != 'Windows' }}
         run: |
+          docker compose version
+          docker compose up -d
           for i in {1..10}; do
             if docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; then
               echo "Redis is ready!"
@@ -66,16 +71,14 @@ jobs:
             sleep 2
           done
           echo "Redis did not start in time" && exit 1
+        shell: bash
 
       - name: Run tests
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: |
-          source .venv/bin/activate
-          coverage run -m pytest --cov=call_gate
-          coverage report
-
-      - name: Stop services
-        if: always()
-        run: docker compose down
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            .\.venv\Scripts\activate
+          else
+            source .venv/bin/activate
