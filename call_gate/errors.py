@@ -80,7 +80,7 @@ class GateOverflowError(CallGateOverflowError):
     """gate overflow error."""
 
 
-class FrameOverflowError(CallGateBaseError):
+class FrameOverflowError(CallGateOverflowError):
     """Frame overflow error."""
 
 

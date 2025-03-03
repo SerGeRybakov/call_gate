@@ -27,7 +27,14 @@ if TYPE_CHECKING:
         NDArray = Sentinel
 
 
-class GateState(NamedTuple):
+class CallGateLimits(NamedTuple):
+    """Representation of gate limits."""
+
+    gate_limit: int
+    frame_limit: int
+
+
+class CallGateState(NamedTuple):
     """Representation of a gate storage state.
 
     Properties:

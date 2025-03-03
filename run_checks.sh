@@ -4,7 +4,7 @@ echo "======= SSORT ======="
 ssort ${project}
 echo
 echo "======= RUFF FORMAT ======="
-ruff format ${project}
+ruff format .
 echo
 echo "======= RUFF LINT ======="
 ruff check ${project} --fix

@@ -16,7 +16,7 @@ the gate values are not lost.
 import time
 import uuid
 
-from threading import RLock, get_ident
+from threading import get_ident
 from types import TracebackType
 from typing import Any, Optional
 
@@ -24,9 +24,9 @@ from redis import Redis, ResponseError
 from typing_extensions import Unpack
 
 from call_gate import FrameLimitError, GateLimitError
-from call_gate.errors import FrameOverflowError, GateOverflowError
-from call_gate.storages.base_storage import BaseStorage, _mute
-from call_gate.typings import GateState
+from call_gate.errors import CallGateValueError, FrameOverflowError, GateOverflowError
+from call_gate.storages.base_storage import BaseStorage
+from call_gate.typings import CallGateState
 
 
 class RedisReentrantLock:
@@ -90,80 +90,156 @@ class RedisStorage(BaseStorage):
 
     The storage supports persistence of the gate values. When the application is restarted,
     the gate values are not lost.
+
     :param name: The name of the gate.
     :param capacity: The maximum number of values that the storage can store.
     :param data: Optional initial data for the storage.
     """
 
-    _data: str  # Redis key for our list
-    _sum: str  # Redis key for the sum of the storage
-
     def __init__(
         self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
     ) -> None:
-        """
-        Initialize the RedisStorage.
+        """Initialize the RedisStorage."""
+        self.name = name
+        self.capacity = capacity
+        # Сохраняем параметры подключения для последующего восстановления
+        self._redis_kwargs = kwargs.copy()
+        self._redis_kwargs.pop("manager", None)
+        self._redis_kwargs.pop("decode_responses", None)
+        self._redis_kwargs["decode_responses"] = True
+        if "db" not in self._redis_kwargs:
+            self._redis_kwargs["db"] = 15
 
-        :param name: Name of the gate.
-        :param capacity: The capacity of the storage.
-        :param data: Optional initial list of integers.
-        :param kwargs: Additional keyword arguments for Redis connection.
-        """
-        super().__init__(name, capacity)
-        if "db" not in kwargs:
-            kwargs["db"] = 15
-        self._data = self.name  # key for list
-        self._sum = f"{self.name}:sum"  # key for the sum
-        self._shm: Redis = Redis(**kwargs, decode_responses=True)
-        self._lock = self._shm.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
-        self._rlock = RLock()
-        self._redis_global_lock = RedisReentrantLock(self._shm, self.name)
+        self._client: Redis = Redis(**self._redis_kwargs)
+        self._data: str = self.name  # Redis key для списка
+        self._sum: str = f"{self.name}:sum"  # Redis key для суммы
+        self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
+        self._rlock = RedisReentrantLock(self._client, self.name)
 
         # Lua script for initialization: sets the list and computes the sum.
         lua_script = """
         local key_list = KEYS[1]
         local key_sum = KEYS[2]
         local capacity = tonumber(ARGV[1])
-        local provided = #ARGV - 1
-        local data = {}
-        local total = 0
-        if provided > 0 then
-            for i = 2, math.min(#ARGV, capacity + 1) do
-                table.insert(data, ARGV[i])
-                total = total + tonumber(ARGV[i])
+        local providedCount = #ARGV - 1  -- data is passed starting from the second argument
+
+        -- Function to adjust the list to the desired size
+        local function adjust_list(list, cap)
+          local len = #list
+          if len < cap then
+            for i = len + 1, cap do
+              table.insert(list, "0")
             end
-            if provided < capacity then
-                local pad = capacity - provided
-                local padded = {}
-                for i = 1, pad do
-                    table.insert(padded, "0")
-                end
-                for i = 1, #data do
-                    table.insert(padded, data[i])
-                end
-                data = padded
+          elseif len > cap then
+            -- Remove excess elements from the end
+            while #list > cap do
+              table.remove(list, cap + 1)
             end
-        else
+          end
+          return list
+        end
+
+        -- Check if the key exists
+        local exists = redis.call("EXISTS", key_list)
+
+        if exists == 1 then
+          -- Key exists
+          local currentList = redis.call("LRANGE", key_list, 0, -1)
+          if providedCount > 0 then
+            -- Data provided: prepend them
+            local newList = {}
+            -- First, insert the provided data (maintaining order: ARGV[2] becomes first)
+            for i = 2, #ARGV do
+              table.insert(newList, ARGV[i])
+            end
+            -- Then, add existing elements
+            for i = 1, #currentList do
+              table.insert(newList, currentList[i])
+            end
+            -- Adjust the final list to the size of capacity
+            newList = adjust_list(newList, capacity)
+            -- Overwrite the list in Redis
+            redis.call("DEL", key_list)
             for i = 1, capacity do
-                table.insert(data, "0")
+              redis.call("RPUSH", key_list, newList[i])
             end
-            total = 0
+            currentList = newList
+          else
+            -- No data provided: adjust existing list to the size of capacity (if necessary)
+            currentList = adjust_list(currentList, capacity)
+            redis.call("DEL", key_list)
+            for i = 1, capacity do
+              redis.call("RPUSH", key_list, currentList[i])
+            end
+          end
+
+          -- Calculate the sum of the final list
+          local total = 0
+          for i = 1, capacity do
+            total = total + tonumber(currentList[i])
+          end
+          redis.call("SET", key_sum, total)
+          return total
+
+        else
+          -- Key does not exist
+          local newList = {}
+          if providedCount > 0 then
+            -- Data provided: fill the list with data
+            for i = 2, #ARGV do
+              table.insert(newList, ARGV[i])
+            end
+          end
+          -- If no data is provided or there is too little/much - adjust the list to the size of capacity
+          newList = adjust_list(newList, capacity)
+          -- Create the list in Redis
+          for i = 1, capacity do
+            redis.call("RPUSH", key_list, newList[i])
+          end
+          -- Calculate the sum
+          local total = 0
+          for i = 1, capacity do
+            total = total + tonumber(newList[i])
+          end
+          redis.call("SET", key_sum, total)
+          return total
         end
-        redis.call("DEL", key_list)
-        redis.call("DEL", key_sum)
-        for i = 1, #data do
-            redis.call("RPUSH", key_list, data[i])
-        end
-        redis.call("SET", key_sum, total)
-        return total
         """
-        with self._redis_global_lock:
+        with self._rlock:
             with self._lock:
                 if data is not None:
                     args = [str(self.capacity)] + [str(x) for x in data]
                 else:
                     args = [str(self.capacity)]
-                self._shm.eval(lua_script, 2, self._data, self._sum, *args)
+                self._client.eval(lua_script, 2, self._data, self._sum, *args)
+
+    def __del__(self) -> None:
+        try:
+            self._client.close()
+        except Exception:  # noqa: S110
+            pass
+
+    def clear(self) -> None:
+        """Clear the sliding storage by resetting all elements to zero."""
+        lua_script = """
+        local key_list = KEYS[1]
+        local key_sum = KEYS[2]
+        local capacity = tonumber(ARGV[1])
+        local data = {}
+        local total = 0
+
+        for i = 1, capacity do
+            table.insert(data, "0")
+        end
+        redis.call("DEL", key_list)
+        for i = 1, #data do
+            redis.call("RPUSH", key_list, data[i])
+        end
+        redis.call("SET", key_sum, total)
+        """
+        with self._rlock:
+            with self._lock:
+                self._client.eval(lua_script, 2, self._data, self._sum, str(self.capacity))
 
     @property
     def sum(self) -> int:
@@ -171,13 +247,13 @@ class RedisStorage(BaseStorage):
 
         :return: The sum of the storage.
         """
-        with self._redis_global_lock:
+        with self._rlock:
             with self._lock:
-                s: str = self._shm.get(self._sum)
+                s: str = self._client.get(self._sum)
                 return int(s) if s is not None else 0
 
     @property
-    def state(self) -> GateState:
+    def state(self) -> CallGateState:
         """Get the current state of the storage."""
         # fmt: off
         lua_script = """
@@ -202,10 +278,10 @@ class RedisStorage(BaseStorage):
         return {numeric_data, stored_sum}
         """  # noqa: E501
         # fmt: on
-        with self._redis_global_lock:
+        with self._rlock:
             with self._lock:
-                data, sum_ = self._shm.eval(lua_script, 2, self._data, self._sum)
-                return GateState(data=data, sum=sum_)
+                data, sum_ = self._client.eval(lua_script, 2, self._data, self._sum)
+                return CallGateState(data=data, sum=sum_)
 
     def slide(self, n: int) -> None:
         """Slide the storage to the right by n frames.
@@ -232,33 +308,23 @@ class RedisStorage(BaseStorage):
         local new_sum = current_sum - removed_sum
         redis.call("SET", key_sum, new_sum)
         """
-        with self._redis_global_lock:
+        if n < 1:
+            raise CallGateValueError("Value must be >= 1.")
+        if n >= self.capacity:
+            self.clear()
+        with self._rlock:
             with self._lock:
-                self._shm.eval(lua_script, 2, self._data, self._sum, str(n))
+                self._client.eval(lua_script, 2, self._data, self._sum, str(n))
 
     def as_list(self) -> list[int]:
         """Get the current sliding storage as a list of integers.
 
         :return: List of storage values.
         """
-        with self._redis_global_lock:
+        with self._rlock:
             with self._lock:
-                lst = self._shm.lrange(self._data, 0, -1)
+                lst = self._client.lrange(self._data, 0, -1)
                 return [int(x) for x in lst]
-
-    def clear(self) -> None:
-        """Clear the sliding storage by resetting all elements to zero."""
-        with self._redis_global_lock:
-            with self._lock:
-                self._shm.delete(self._data)
-                self._shm.rpush(self._data, *([0] * self.capacity))
-                self._shm.set(self._sum, 0)
-
-    def close(self) -> None:
-        """Close the Redis connection and associated resources."""
-        with self._redis_global_lock:
-            with self._lock:
-                _mute(self._shm.close)
 
     def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
         """Atomically update the value of the most recent frame and the storage sum.
@@ -288,10 +354,7 @@ class RedisStorage(BaseStorage):
         local current_sum = tonumber(redis.call("GET", key_sum) or "0")
         local new_sum = current_sum + inc_value
         if frame_limit > 0 and new_value > frame_limit then
-          return {err="frame limit exceeded"}
-        end
-        if new_value < 0 then
-          return {err="frame overflow"}
+          return {err="Frame limit exceeded"}
         end
         if gate_limit > 0 and new_sum > gate_limit then
           return {err="Gate limit exceeded"}
@@ -299,24 +362,26 @@ class RedisStorage(BaseStorage):
         if new_sum < 0 then
           return {err="Gate overflow"}
         end
+        if new_value < 0 then
+          return {err="Frame overflow"}
+        end
         redis.call("LSET", key_list, 0, new_value)
         redis.call("SET", key_sum, new_sum)
         return new_value
         """
         try:
-            self._shm.eval(lua_script, 2, self._data, self._sum, str(value), str(frame_limit), str(gate_limit))
+            self._client.eval(lua_script, 2, self._data, self._sum, str(value), str(frame_limit), str(gate_limit))
         except ResponseError as e:
             error_message = str(e)
-            if "frame limit exceeded" in error_message:
+            if "Frame limit exceeded" in error_message:
                 raise FrameLimitError("Frame limit exceeded") from e
-            elif "Gate limit exceeded" in error_message:
+            if "Gate limit exceeded" in error_message:
                 raise GateLimitError("Gate limit exceeded") from e
-            elif "Gate overflow" in error_message:
+            if "Gate overflow" in error_message:
                 raise GateOverflowError("Gate sum value must be >= 0.") from e
-            elif "frame overflow" in error_message:
+            if "Frame overflow" in error_message:
                 raise FrameOverflowError("Frame value must be >= 0.") from e
-            else:
-                raise e
+            raise e
 
     def __getitem__(self, index: int) -> int:
         """Get the element at the specified index from the storage.
@@ -324,22 +389,37 @@ class RedisStorage(BaseStorage):
         :param index: The index of the element.
         :return: The integer value at the specified index.
         """
-        with self._redis_global_lock:
+        with self._rlock:
             with self._rlock:
-                val: str = self._shm.lindex(self._data, index)
+                val: str = self._client.lindex(self._data, index)
                 return int(val) if val is not None else 0
 
-    def __setitem__(self, index: int, value: int) -> None:
-        lua_script = """
-        local key_list = KEYS[1]
-        local key_sum = KEYS[2]
-        local new_value = tonumber(ARGV[1])
-        local current_sum = tonumber(redis.call("GET", key_sum) or "0")
-        local old_value = tonumber(redis.call("LINDEX", key_list, 0) or "0")
-        local new_sum = current_sum - old_value + new_value
-        redis.call("LSET", key_list, 0, new_value)
-        redis.call("SET", key_sum, new_sum)
+    def __getstate__(self) -> dict:
+        """Get the serializable state of the object.
+
+        Excludes non-serializable objects (Redis client and locks).
         """
-        with self._redis_global_lock:
-            with self._lock:
-                self._shm.eval(lua_script, 2, self._data, self._sum, str(value))
+        state = self.__dict__.copy()
+        # Remove non-serializable objects
+        state.pop("_client", None)
+        state.pop("_lock", None)
+        state.pop("_rlock", None)
+        return state
+
+    def __reduce__(self) -> tuple[type["RedisStorage"], tuple[str, int], dict[str, Any]]:
+        """Support the pickle protocol.
+
+        Returns a tuple with the constructor call and the state of the object.
+        """
+        return self.__class__, (self.name, self.capacity), self.__getstate__()
+
+    def __setstate__(self, state: dict) -> None:
+        """Restore the state of the object from a serialized dictionary.
+
+        Restores the Redis connection and recreates the locks.
+        """
+        self.__dict__.update(state)
+
+        self._client = Redis(**self._redis_kwargs)
+        self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
+        self._rlock = RedisReentrantLock(self._client, self.name)

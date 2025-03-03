@@ -20,8 +20,9 @@ the gate values are lost.
 """
 
 from collections import deque
-from threading import Lock, RLock
-from typing import Optional
+from typing import Any, Optional
+
+from typing_extensions import Unpack
 
 from call_gate.errors import (
     CallGateValueError,
@@ -31,7 +32,7 @@ from call_gate.errors import (
     GateOverflowError,
 )
 from call_gate.storages.base_storage import BaseStorage
-from call_gate.typings import GateState
+from call_gate.typings import CallGateState
 
 
 class SimpleStorage(BaseStorage):
@@ -62,32 +63,39 @@ class SimpleStorage(BaseStorage):
     def __get_clear_deque(self) -> deque:
         return deque([0] * self.capacity, maxlen=self.capacity)
 
-    def __init__(self, name: str, capacity: int, *, data: Optional[list[int]] = None) -> None:
-        super().__init__(name, capacity)
-        self._lock: Lock = Lock()
-        self._rlock: RLock = RLock()
+    def __init__(
+        self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
+    ) -> None:
+        super().__init__(name, capacity, **kwargs)
         with self._lock:
-            self._data: deque = self.__get_clear_deque()
             if data:
-                self._data.extendleft(data)
+                data = list(data)
+                if len(data) != self.capacity:
+                    if len(data) > self.capacity:
+                        data = data[: self.capacity]
+                    else:
+                        diff = self.capacity - len(data)
+                        data.extend([0] * diff)
+                self._data = deque(data)
+            else:
+                self._data: deque = self.__get_clear_deque()
+
+            self._sum = sum(self._data)
 
     @property
     def sum(self) -> int:
         """Get the sum of all values in the storage."""
         with self._rlock:
-            return sum(self._data)
+            with self._lock:
+                return self._sum
 
     @property
-    def state(self) -> GateState:
+    def state(self) -> CallGateState:
         """Get the current state of the storage."""
         with self._rlock:
             with self._lock:
                 lst = list(self._data)
-                return GateState(data=lst, sum=int(sum(lst)))
-
-    def close(self) -> None:
-        """Close storage memory segment."""
-        self._data.clear()
+                return CallGateState(data=lst, sum=int(sum(lst)))
 
     def slide(self, n: int) -> None:
         """Slide storage data to the right by n frames.
@@ -99,17 +107,22 @@ class SimpleStorage(BaseStorage):
         with self._lock:
             if n < 1:
                 raise CallGateValueError("Value must be >= 1.")
+            if n >= self.capacity:
+                self.clear()
             self._data.extendleft([0] * n)
 
     def as_list(self) -> list:
         """Convert the contents of the storage data to a regular list."""
         with self._rlock:
-            return list(self._data)
+            with self._lock:
+                return list(self._data)
 
     def clear(self) -> None:
         """Clear the data contents (resets all values to 0)."""
-        with self._lock:
-            self._data = self.__get_clear_deque()
+        with self._rlock:
+            with self._lock:
+                self._data = self.__get_clear_deque()
+                self._sum = 0
 
     def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
         """Atomically update the value of the most recent frame and the storage sum.
@@ -144,12 +157,8 @@ class SimpleStorage(BaseStorage):
                 raise FrameOverflowError("Frame value must be >= 0.")
 
             self._data[0] = new_value
-            return new_value
+            self._sum = new_sum
 
     def __getitem__(self, index: int) -> int:
         with self._rlock:
             return int(self._data[index])
-
-    def __setitem__(self, index: int, value: int) -> None:
-        with self._lock:
-            self._data[index] = value

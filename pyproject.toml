@@ -41,8 +41,8 @@ all = ["redis", "numpy"]
 [tool.poetry.dependencies]
 python = ">=3.9 <4"
 typing-extensions = ">=4.12.2"
-redis = { version = ">=5.0.0" , optional = true}
-numpy = { version = ">=1.20 <3" , optional = true}
+redis = { version = ">=5.0.0", optional = true }
+numpy = { version = ">=1.20 <3", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 python-dateutil = ">=2.9.0.post0"
@@ -53,9 +53,11 @@ mypy = ">=1.0.0"
 mypy-extensions = ">=1.0.0"
 pre-commit = ">=3.0.4"
 pytest = ">=7.2.0"
+pytest-asyncio = ">=0.25.3"
 pytest-cov = ">=4.0.0"
 pytest-sugar = ">=0.9.6"
 pytest-random-order = ">=1.1.0"
+pytest-retry = ">=1.7.0"
 deepdiff = ">=6.3.0"
 pytest-deadfixtures = ">=2.2.1"
 pytest-timeout = ">=2.3.1"
@@ -63,6 +65,8 @@ bandit = ">=1.7.5"
 deptry = ">=0.6.4"
 numpy = ">=1.20.0 <3"
 redis = ">=5.0.0"
+faker = ">=19.0.0"
+fakeredis = ">=2.2.0"
 
 
 [tool.poetry.group.docs.dependencies]
@@ -86,24 +90,24 @@ src = ["call_gate"]
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
 select = [
-    'F', # flake8
-    'C90', # mccabe
-    'I', # isort
-    'UP', # pyupgrade
-    'S', # flake8-bandit
-    'ASYNC', # flake8-async
-    'B', # flake8-bugbear
-    'Q', # flake8-quotes
-    'TCH', # flake8-type-checking
-    'PTH', # flake8-use-pathlib
-     'D', # pydocstyle
-    'W', # pycodestyle (warnings)
-    'E', # pycodestyle (errors)
-    'N', # pep8-naming
-    'PT', # flake8-pytest-style
-    'PL', # pylint
-    'TID', # flake8-tidy-imports
-    'RUF', # ruff-specific rules
+  'F', # flake8
+  'C90', # mccabe
+  'I', # isort
+  'UP', # pyupgrade
+  'S', # flake8-bandit
+  'ASYNC', # flake8-async
+  'B', # flake8-bugbear
+  'Q', # flake8-quotes
+  'TCH', # flake8-type-checking
+  'PTH', # flake8-use-pathlib
+  'D', # pydocstyle
+  'W', # pycodestyle (warnings)
+  'E', # pycodestyle (errors)
+  'N', # pep8-naming
+  'PT', # flake8-pytest-style
+  'PL', # pylint
+  'TID', # flake8-tidy-imports
+  'RUF', # ruff-specific rules
 ]
 
 ignore = [
@@ -115,11 +119,11 @@ ignore = [
 # https://docs.astral.sh/ruff/settings/#extend-per-file-ignores
 [tool.ruff.lint.extend-per-file-ignores]
 '__init__.py' = [
-    "D104", # missing-module-docstring
-    "F401", # {name} imported but unused; consider using importlib.util.find_spec to test for availability
-    "F403", # from {name} import * used; unable to detect undefined names
-    "F405", # {name} may be undefined, or defined from star imports
-    "TID252", # Relative imports from parent modules are banned
+  "D104", # missing-module-docstring
+  "F401", # {name} imported but unused; consider using importlib.util.find_spec to test for availability
+  "F403", # from {name} import * used; unable to detect undefined names
+  "F405", # {name} may be undefined, or defined from star imports
+  "TID252", # Relative imports from parent modules are banned
 ]
 
 # https://docs.astral.sh/ruff/settings/#lintpylint
@@ -141,11 +145,11 @@ max-complexity = 12
 # https://docs.astral.sh/ruff/settings/#lintisort
 [tool.ruff.lint.isort]
 section-order = [
-    'future',
-    'standard-library',
-    'third-party',
-    'first-party',
-    'local-folder',
+  'future',
+  'standard-library',
+  'third-party',
+  'first-party',
+  'local-folder',
 ]
 known-first-party = ["call_gate"]
 lines-after-imports = 2
@@ -202,7 +206,11 @@ skips = ["B324"]
 # https://pypi.org/project/pytest-sugar/
 minversion = 7.0
 asyncio_mode = "auto"
-addopts = ["--ignore=tmp.py"]
+asyncio_default_fixture_loop_scope = "session"
+addopts = [
+  "--ignore=tmp.py",
+#  "--random-order"
+]
 norecursedirs = "data"
 testpaths = "./tests"
 
@@ -220,6 +228,7 @@ omit = [
   "*/__init__.py",
   "tests/*",
   "tmp.py",
+  "call_gate/typings.py"
 ]
 
 [tool.coverage.html]

@@ -13,18 +13,19 @@ Features:
   - Includes error handling for common scenarios, with specific exceptions derived from base errors within the library.
 
 Optional dependencies:
-  - `numpy` for shared memory storage;
   - `redis` for Redis-based storage.
 """
 
 import asyncio
+import json
 import time
 
 from asyncio import iscoroutinefunction
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Coroutine
+from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from functools import wraps
-from multiprocessing import Lock, RLock
+from functools import partial, wraps
+from pathlib import Path
 from types import TracebackType
 from typing import Any, Callable, Optional, Union
 from zoneinfo import ZoneInfo
@@ -38,21 +39,18 @@ from call_gate.errors import (
     SpecialCallGateError,
     ThrottlingError,
 )
-from call_gate.storages.base_storage import BaseStorage, _mute
+from call_gate.storages.base_storage import BaseStorage, get_global_manager
+from call_gate.storages.shared import SharedMemoryStorage
 from call_gate.storages.simple import SimpleStorage
 from call_gate.typings import (
+    CallGateLimits,
+    CallGateState,
     Frame,
-    GateState,
     GateStorageModeType,
     GateStorageType,
     Sentinel,
 )
 
-
-try:
-    import numpy as np
-except ImportError:
-    np = Sentinel
 
 try:
     import redis
@@ -75,22 +73,44 @@ def dual(sync_method: Callable) -> Callable:
     a = A()
     a.method()
     await a.method()
+
+    :param sync_method: synchronous method
     """
 
     @wraps(sync_method)
     def wrapper(
         self: "CallGate", *args: Any, **kwargs: Any
     ) -> Union[Coroutine[Any, Any, None], Callable[[Any, ...], Any]]:
+        """Make a method work both synchronously and asynchronously.
+
+        If an event loop is already running, the method will execute in a thread pool,
+        returning an awaitable object. Otherwise, the synchronous function is called directly.
+
+        :param self: The CallGate object to call the method on.
+        :param args: Any arguments to pass to the method.
+        :param kwargs: Any keyword arguments to pass to the method.
+        """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
 
         async def async_inner(self: "CallGate", *args: Any, **kwargs: Any) -> None:
+            """Run the method in a thread pool using the current event loop.
+
+            :param self: The CallGate object to call the method on.
+            :param args: Any arguments to pass to the method.
+            :param kwargs: Any keyword arguments to pass to the method.
+            """
             if self._alock is None:
                 self._alock = asyncio.Lock()
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="CallGateAsync")
+            if self._loop is None:
+                self._loop = asyncio.get_running_loop()
             async with self._alock:
-                return await asyncio.to_thread(sync_method, self, *args, **kwargs)
+                future = partial(sync_method, self, *args, **kwargs)
+                return await self._loop.run_in_executor(self._executor, future)
 
         if loop and loop.is_running():
             return async_inner(self, *args, **kwargs)
@@ -98,6 +118,125 @@ def dual(sync_method: Callable) -> Callable:
             return sync_method(self, *args, **kwargs)
 
     return wrapper
+
+
+class _CallGateWrapper:
+    """Internal class for wrapping a CallGate instance into a decorator.
+
+    When a CallGate instance is used as a decorator, this class is used to wrap
+    the CallGate instance and provide the decorator functionality.
+
+    The class provides a __call__ method that is used as the decorator. The
+    __call__ method takes a function or coroutine as an argument and returns
+    a new function or coroutine that wraps the original one with the CallGate
+    instance's update method.
+
+    :param gate: CallGate instance.
+    :param value: Value to be added to the counter.
+    :param throw: Flag for throwing exceptions.
+    """
+
+    def __init__(self, gate: "CallGate", value: int, throw: bool):
+        self.gate = gate
+        self.value = value
+        self.throw = throw
+
+    # Method for use as a decorator
+    def __call__(self, func: Callable) -> Union[Callable, Awaitable]:
+        """Gate instance decorator for functions and coroutines.
+
+        :param func: Function or coroutine to be wrapped.
+        """
+
+        @wraps(func)
+        async def awrapper(*args: Any, **kwargs: Any) -> Any:
+            """Async wrapper for functions and coroutines.
+
+            This function is used as a decorator for functions and coroutines.
+            It wraps the original function or coroutine with the CallGate
+            instance's update method.
+
+            :param args: Arguments to be passed to the wrapped function or coroutine.
+            :param kwargs: Keyword arguments to be passed to the wrapped function or coroutine.
+            :return: The result of the wrapped function or coroutine.
+            """
+            await self.gate.update(self.value, self.throw)
+            return await func(*args, **kwargs)
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """Sync wrapper for functions and coroutines.
+
+            This function is used as a decorator for functions and coroutines.
+            It wraps the original function or coroutine with the CallGate
+            instance's update method.
+
+            :param args: Arguments to be passed to the wrapped function or coroutine.
+            :param kwargs: Keyword arguments to be passed to the wrapped function or coroutine.
+            :return: The result of the wrapped function or coroutine.
+            """
+            self.gate.update(self.value, self.throw)
+            return func(*args, **kwargs)
+
+        if iscoroutinefunction(func):
+            return awrapper
+        return wrapper
+
+    def __enter__(self) -> "CallGate":
+        """Context manager entrance for CallGate.
+
+        The context manager is used to automatically call the update method
+        of the CallGate instance when entering the context and do nothing when
+        exiting the context.
+
+        :param self: CallGate instance.
+        :return: The CallGate instance.
+        """
+        self.gate.update(self.value, self.throw)
+        return self.gate
+
+    def __exit__(
+        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
+    ) -> None:
+        """Context manager exit for CallGate.
+
+        The context manager is used to automatically call the update method
+        of the CallGate instance when entering the context and do nothing when
+        exiting the context.
+
+        :param self: CallGate instance.
+        :param exc_type: Type of exception raised.
+        :param exc_val: Value of the exception raised.
+        :param exc_tb: Traceback of the exception raised.
+        """
+
+    async def __aenter__(self) -> "CallGate":
+        """Async context manager entrance for CallGate.
+
+        The async context manager is used to automatically call the update method
+        of the CallGate instance when entering the context and do nothing when
+        exiting the context.
+
+        :param self: CallGate instance.
+        :return: The CallGate instance.
+        """
+        await self.gate.update(self.value, self.throw)
+        return self.gate
+
+    async def __aexit__(
+        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
+    ) -> None:
+        """Async context manager exit for CallGate.
+
+        The async context manager is used to automatically call the update method
+        of the CallGate instance when entering the context and do nothing when
+        exiting the context.
+
+        :param self: CallGate instance.
+        :param exc_type: Type of exception raised.
+        :param exc_val: Value of the exception raised.
+        """
+        pass
 
 
 class CallGate:
@@ -129,18 +268,13 @@ class CallGate:
     The gate has 3 types of data storage:
         - ``GateStorageType.simple`` (default) - stores data in a ``collections.deque``.
 
-        - ``GateStorageType.shared`` (requires ``numpy``) - stores data in a NumPy array attached to
-        a ``multiprocessing.SharedMemory`` buffer that is shared between processes and threads started
-        from one parent process/thread. Why numpy? Benchmarks of 10**6 (1 million) elements array write/read:
-            1) numpy:           Write: 0.001528s, Read: 0.001265s
-            2) array.array:     Write: 0.003562s, Read: 0.001293s
-            3) cython:          Write: 0.067095s, Read: 0.080463s
-
+        - ``GateStorageType.shared`` - stores data in a piece of memory that is shared between processes
+        and threads started from one parent process/thread.
 
         - ``GateStorageType.redis`` (requires ``redis`` (``redis-py``) - stores data in Redis,
           what provides a distributed storage between multiple processes, servers and Docker containers.
 
-    gate constructor accepts ``**kwargs`` for ``GateStorageType.redis`` storage. The parameters described
+    CallGate constructor accepts ``**kwargs`` for ``GateStorageType.redis`` storage. The parameters described
     at https://redis.readthedocs.io/en/latest/connections.html for ``redis.Redis`` object can be passed
     as keyword arguments. Redis URL is not supported. If not provided, the gate will use the default
     connection parameters, except the ``db``, which is set to ``15``.
@@ -196,7 +330,7 @@ class CallGate:
 
     @staticmethod
     def _validate_and_set_timezone(tz_name: str) -> Optional[ZoneInfo]:
-        if tz_name is Sentinel:
+        if tz_name is Sentinel or tz_name is None:
             return None
         return ZoneInfo(tz_name)
 
@@ -222,6 +356,12 @@ class CallGate:
                 raise CallGateValueError("Timestamp must be an ISO string.") from e
         return None
 
+    def _validate_data(self, data: Union[list[int], tuple[int, ...]]) -> None:
+        if not isinstance(data, (list, tuple)):
+            raise CallGateTypeError("Data must be a list or a tuple.")
+        if not all(self._is_int(v) for v in data):
+            raise CallGateTypeError("Data must be a list or a tuple of integers.")
+
     def __init__(
         self,
         name: str,
@@ -236,9 +376,12 @@ class CallGate:
         _current_dt: Optional[str] = None,
         **kwargs: dict[str, Any],
     ) -> None:
-        self._lock = Lock()
-        self._rlock = RLock()
+        manager = get_global_manager()
+        self._lock = manager.Lock()
+        self._rlock = manager.RLock()
         self._alock: Optional[asyncio.Lock] = None
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._name = name
         self._timezone: Optional[ZoneInfo] = self._validate_and_set_timezone(timezone)
         self._gate_size, self._frame_step = self._validate_and_set_gate_and_granularity(gate_size, frame_step)
@@ -261,17 +404,10 @@ class CallGate:
             storage_type = SimpleStorage
 
         elif storage == GateStorageType.shared:
-            if np is Sentinel:
-                raise CallGateImportError(
-                    "Package `numpy` is not installed. Please, install it manually to use the shared memory storage "
-                    "or set storage to `simple' or `shared`."
-                )
-            from call_gate.storages.shared import SharedMemoryStorage
-
             storage_type = SharedMemoryStorage
 
         elif storage == GateStorageType.redis:
-            if redis is Sentinel:
+            if redis is Sentinel:  # no cov
                 raise CallGateImportError(
                     "Package `redis` (`redis-py`) is not installed. Please, install it manually to use Redis storage "
                     "or set storage to `simple' or `shared`."
@@ -280,20 +416,76 @@ class CallGate:
 
             storage_type = RedisStorage
 
-        else:
+        else:  # no cov
             raise storage_err
 
         self._storage: GateStorageType = storage
-        with self._lock:
-            kw: dict[str, Any] = {"name": name, "capacity": self._frames}
-            if _data:
-                kw.update({"data": _data})
-            if kwargs:
-                kw.update(kwargs)
-            self._data: BaseStorage = storage_type(**kw)
+        kw = {}
+        if _data:
+            self._validate_data(_data)
+            kw.update({"data": _data})
+        if kwargs:  # no cov
+            kw.update(**kwargs)  # type: ignore[call-overload]
+        self._data: BaseStorage = storage_type(name, self._frames, manager=manager, **kw)  # type: ignore[arg-type]
 
     def __del__(self) -> None:
-        _mute(self.close)
+        if self._executor is not None:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+
+    def as_dict(self) -> dict:
+        """Serialize the gate to a dictionary.
+
+        May be used for persisting the gate state.
+        """
+        with self._rlock:
+            return {
+                "name": self.name,
+                "gate_size": self.gate_size.total_seconds(),
+                "frame_step": self.frame_step.total_seconds(),
+                "gate_limit": self.gate_limit,
+                "frame_limit": self.frame_limit,
+                "timezone": self.timezone.key if self.timezone else None,
+                "storage": self.storage,
+                "_data": self.data,
+                "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
+                **self._kwargs,
+            }
+
+    def to_file(self, path: Union[str, Path]) -> None:
+        """Save CallGate state to file.
+
+        If path to file does not exit, it will be given a try to be created.
+
+        :param path: path to file
+        """
+        if isinstance(path, str):
+            path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(self.as_dict(), f, indent=2)
+
+    @classmethod
+    def from_file(
+        cls,
+        path: Union[str, Path],
+        *,
+        storage: GateStorageModeType = Sentinel,
+    ) -> "CallGate":
+        """Restore the gate from file.
+
+        Any supported type of storage can be indicated for a new gate,
+        otherwise it will be restored from the metadata.
+
+        :param path: path to file
+        :param storage: storage type
+        """
+        if isinstance(path, str):
+            path = Path(path)
+        with path.open(mode="r", encoding="utf-8") as f:
+            state = json.load(f)
+            if storage is not Sentinel and storage != state["storage"]:
+                state["storage"] = storage
+            return cls(**state)
 
     def _current_step(self) -> datetime:
         current_time = datetime.now(self._timezone)
@@ -307,7 +499,7 @@ class CallGate:
             return
         diff = int((current_step - self._current_dt) / self._frame_step)
         if diff >= self._frames:
-            self.clean()
+            self.clear()
         elif diff > 0:
             self._data.slide(diff)
             self._current_dt = current_step
@@ -330,6 +522,8 @@ class CallGate:
             raise CallGateTypeError("Value must be an integer.")
         if value == 0:
             return  # return early as there's nothing to do
+        if value > self.frame_limit > 0:
+            raise FrameLimitError(f"The passed value exceeds the set frame limit: {value} > {self.frame_limit}", self)
 
         with self._rlock:
             self._refresh_frames()
@@ -372,7 +566,7 @@ class CallGate:
             return self._data.as_list()
 
     @property
-    def state(self) -> GateState:
+    def state(self) -> CallGateState:
         """Get the current state of the storage."""
         return self._data.state
 
@@ -387,9 +581,9 @@ class CallGate:
         return self._frames
 
     @property
-    def limits(self) -> tuple[int, int]:
+    def limits(self) -> CallGateLimits:
         """Get gate and frame limits in a tuple."""
-        return self._gate_limit, self._frame_limit
+        return CallGateLimits(gate_limit=self._gate_limit, frame_limit=self._frame_limit)
 
     @property
     def gate_limit(self) -> int:
@@ -431,6 +625,7 @@ class CallGate:
             current = self._current_dt if self._current_dt else self._current_step()
             return Frame(current - self._frame_step * (self._frames - 1), self._data[self._frames - 1])
 
+    @dual
     def check_limits(self) -> None:
         """Check if the total and cell limits are satisfied.
 
@@ -440,12 +635,13 @@ class CallGate:
         current_value = self.current_frame.value
         with self._lock:
             self._refresh_frames()
+            if self._gate_limit and sum_ >= self._gate_limit:
+                raise GateLimitError(f"Gate limit is reached: {self._gate_limit}", self)
             if self._frame_limit and current_value >= self._frame_limit:
                 raise FrameLimitError(f"Frame limit is reached: {self._frame_limit}", self)
-            if self._gate_limit and sum_ >= self._gate_limit:
-                raise GateLimitError(f"gate limit is reached: {self._gate_limit}", self)
 
-    def clean(self) -> None:
+    @dual
+    def clear(self) -> None:
         """Clean the gate (make it empty).
 
         Removes all counters and sets gate sum to zero.
@@ -454,151 +650,17 @@ class CallGate:
             self._data.clear()
             self._current_dt = None
 
-    def as_dict(self) -> dict:
-        """Serialize the gate to a dictionary.
-
-        May be used for persisting the gate state.
-        """
-        with self._rlock:
-            return {
-                "name": self.name,
-                "gate_size": self.gate_size.total_seconds(),
-                "frame_step": self.frame_step.total_seconds(),
-                "gate_limit": self.gate_limit,
-                "frame_limit": self.frame_limit,
-                "timezone": self.timezone.key if self.timezone else None,
-                "storage": self.storage,
-                "_data": self.data,
-                "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
-                **self._kwargs,
-            }
-
-    def close(self) -> None:
-        """Close the gate."""
-        self._data.close()
-
-    def __call__(self, value: int = 1, *, throw: bool = False) -> Callable[[Any], Callable[[Any, Any], Any]]:
+    def __call__(self, value: int = 1, *, throw: bool = False) -> _CallGateWrapper:
         """Gate instance decorator for functions and coroutines.
 
         :param value: The value to add to the current frame value.
         :param throw: If True, the method will raise an exception if the limit is exceeded.
         """
-
-        def decorator(func: Callable[[Any, ...], Any]) -> Callable[[Any, ...], Any]:
-            """Decorate function.
-
-            :param func: The function or coroutine to decorate.
-            """
-
-            @wraps(func)
-            async def awrapper(*args: Any, **kwargs: Any) -> Any:
-                await self.update(value, throw)
-                return await func(*args, **kwargs)
-
-            @wraps(func)
-            def wrapper(*args: Any, **kwargs: Any) -> Any:
-                self.update(value, throw)
-                return func(*args, **kwargs)
-
-            if iscoroutinefunction(func):
-                return awrapper
-            return wrapper
-
-        return decorator
+        return _CallGateWrapper(self, value, throw)
 
     def __len__(self) -> int:
         """Get current number of the gate existing frames."""
         return self._frames
-
-    def __bool__(self) -> bool:
-        """Check if the gate is empty (full of zeros) or not."""
-        return bool(self._data)
-
-    def __enter__(self, value: int = 1, *, throw: bool = False) -> Any:
-        self.update(value, throw)
-
-    def __exit__(
-        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
-    ) -> None:
-        pass
-
-    async def __aenter__(self, value: int = 1, *, throw: bool = False) -> Any:
-        await self.update(value, throw)
-
-    async def __aexit__(
-        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
-    ) -> None:
-        pass
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Get the state of the gate as a dictionary."""
-        return self.as_dict()
-
-    def __reduce__(self) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
-        """Reduce the instance to a tuple: (callable, args, state)."""
-        return (
-            self.__class__,
-            (self._name, self._gate_size, self._frame_step),
-            self.__getstate__(),
-        )
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Set the state of the gate from a dictionary.
-
-        :param state: The state dictionary.
-        """
-        # Restore main parameters
-        self._name = state["name"]
-        self._gate_size = timedelta(seconds=state["gate_size"])
-        self._frame_step = timedelta(seconds=state["frame_step"])
-        self._gate_limit = state["gate_limit"]
-        self._frame_limit = state["frame_limit"]
-        self._timezone = ZoneInfo(state["timezone"]) if state["timezone"] else None
-        self._storage = GateStorageType[state["storage"]]
-        self._frames = int(self._gate_size // self._frame_step)
-        self._current_dt = datetime.fromisoformat(state["_current_dt"]) if state["_current_dt"] else None
-        # Other additional parameters
-        self._kwargs = {
-            k: v
-            for k, v in state.items()
-            if k
-            not in (
-                "name",
-                "gate_size",
-                "frame_step",
-                "gate_limit",
-                "frame_limit",
-                "timezone",
-                "storage",
-                "_data",
-                "_current_dt",
-            )
-        }
-        # Recreate the lock (it cannot be pickled)
-        self._lock = RLock()
-
-        # Restore data storage depending on the mode.
-        if self._storage == GateStorageType.simple:
-            storage = SimpleStorage
-        elif self._storage == GateStorageType.shared:
-            from call_gate.storages.shared import SharedMemoryStorage
-
-            storage = SharedMemoryStorage
-        elif self._storage == GateStorageType.redis:
-            from call_gate.storages.redis import RedisStorage
-
-            storage = RedisStorage
-        else:
-            raise ValueError("Invalid storage storage during unpickling.")
-
-        # Call the storage constructor, passing the saved state of the data.
-        # Note that the constructor expects the parameter 'data' instead of '_data'.
-        self._data = storage(
-            name=self._name,
-            capacity=self._frames,
-            data=state["_data"],
-            **self._kwargs,
-        )
 
     def __repr__(self) -> str:
         """Gate representation."""

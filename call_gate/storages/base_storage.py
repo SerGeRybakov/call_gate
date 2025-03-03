@@ -7,21 +7,31 @@ and shared. Simple storages store data in memory and are not thread-safe.
 Shared storages store data in shared memory and are thread-safe and process-safe.
 """
 
+import atexit
+import multiprocessing
+
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional
+from multiprocessing.managers import SyncManager
+from typing import Any, Optional
 
 from typing_extensions import Unpack
 
-from call_gate.typings import GateState, LockType, StorageType
+from call_gate.typings import CallGateState
 
 
-def _mute(method: Callable) -> Any:
-    try:
-        method()
-    except (FileNotFoundError, ImportError, TypeError, ValueError):
-        pass
-    except Exception:
-        raise
+multiprocessing.set_start_method("spawn", force=True)
+
+# Global manager for the entire application
+_GLOBAL_MANAGER: Optional[SyncManager] = None
+
+
+def get_global_manager() -> SyncManager:
+    """Return a global instance of Manager(), creating it only once."""
+    global _GLOBAL_MANAGER  # noqa: PLW0603
+    if _GLOBAL_MANAGER is None:
+        _GLOBAL_MANAGER = multiprocessing.Manager()
+        atexit.register(_GLOBAL_MANAGER.shutdown)
+    return _GLOBAL_MANAGER
 
 
 class BaseStorage(ABC):
@@ -31,17 +41,15 @@ class BaseStorage(ABC):
     It provides a base interface and common methods for all storages.
     """
 
-    _lock: LockType
-    _rlock: LockType
-    _data: StorageType
-    _sum: Optional[int] = None
+    _data: Any
+    _sum: Any
 
     def __init__(self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]):
         self.name = name
         self.capacity = capacity
-
-    def __del__(self) -> None:
-        _mute(self.close)
+        manager = kwargs.get("manager")
+        self._lock = manager.Lock()
+        self._rlock = manager.RLock()
 
     @abstractmethod
     def slide(self, n: int) -> int:
@@ -55,7 +63,7 @@ class BaseStorage(ABC):
 
     @property
     @abstractmethod
-    def state(self) -> GateState:
+    def state(self) -> CallGateState:
         """Get the current state of the storage."""
         pass
 
@@ -96,24 +104,10 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
-    def close(self) -> None:
-        """Close storage memory segment."""
-        pass
-
-    @abstractmethod
     def __getitem__(self, index: int) -> int:
         """Get the value from the index of the storage.
 
         :param index: Ignored; the operation always affects the head (index 0).
-        """
-        pass
-
-    @abstractmethod
-    def __setitem__(self, index: int, value: int) -> None:
-        """Replace the value at the index of the storage, automatically updating the storage sum.
-
-        :param index: Ignored; the operation always affects the head (index 0).
-        :param value: The new integer value to set at index 0.
         """
         pass
 

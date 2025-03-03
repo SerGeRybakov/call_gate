@@ -11,67 +11,18 @@ The storage does not support persistence of the gate values. When the applicatio
 is restarted, the gate values are lost.
 """
 
-import fcntl
-
-from multiprocessing.shared_memory import SharedMemory
-from pathlib import Path
-from threading import RLock
-from types import TracebackType
-from typing import TYPE_CHECKING, Any, Optional, TextIO
-
-import numpy as np
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any, Optional
 
 from typing_extensions import Unpack
 
-from call_gate import FrameLimitError, GateLimitError
-from call_gate.errors import FrameOverflowError, GateOverflowError
-from call_gate.storages.base_storage import BaseStorage, _mute
-from call_gate.typings import GateState
+from call_gate.errors import CallGateValueError, FrameLimitError, FrameOverflowError, GateLimitError, GateOverflowError
+from call_gate.storages.base_storage import BaseStorage
+from call_gate.typings import CallGateState
 
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
-
-class GlobalLock:
-    """Global lock with file-based locking for processes."""
-
-    def _open(self) -> None:
-        """Open the lockfile if it's not opened yet."""
-        if self.fd is None:
-            self.fd: TextIO = self.lockfile.open(mode="w", encoding="utf-8")
-
-    def __init__(self, name: str):
-        self.lockfile = Path(f".{name}.lock")
-        self.fd: Optional[TextIO] = None
-        self._open()
-
-    def __del__(self) -> None:
-        self.close()
-
-    def acquire(self) -> None:
-        """Acquire the lock."""
-        fcntl.flock(self.fd.fileno(), fcntl.LOCK_EX)
-
-    def release(self) -> None:
-        """Release the lock."""
-        fcntl.flock(self.fd.fileno(), fcntl.LOCK_UN)
-
-    def close(self) -> None:
-        """Close the lockfile."""
-        if self.fd:
-            self.fd.close()
-            self.fd = None
-            self.lockfile.unlink(missing_ok=True)
-
-    def __enter__(self) -> None:
-        self._open()
-        self.acquire()
-
-    def __exit__(
-        self, exc_type: Optional[type[Exception]], exc_val: Optional[Exception], exc_tb: Optional[TracebackType]
-    ) -> None:
-        self.release()
+    from multiprocessing.managers import SyncManager
 
 
 class SharedMemoryStorage(BaseStorage):
@@ -91,68 +42,49 @@ class SharedMemoryStorage(BaseStorage):
     :param data: Optional initial data for the storage.
     """
 
-    _dtype = np.uint64
-    _ref_count_dtype = np.uint16
-
-    def _set_sum(self) -> None:
-        self._sum[...] = np.sum(self._data)
-
     def __init__(
         self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
     ) -> None:
-        super().__init__(name, capacity)
-        self._lock: GlobalLock = GlobalLock(name)
-        self._rlock = RLock()
+        super().__init__(name, capacity, **kwargs)
+        manager: SyncManager = kwargs.get("manager")
         with self._lock:
-            try:
-                self._data_shm = SharedMemory(name=name)
-                self._data: NDArray = np.ndarray(shape=(capacity,), dtype=self._dtype, buffer=self._data_shm.buf)
-            except FileNotFoundError:
-                self._data_shm = SharedMemory(name=name, create=True, size=np.dtype(self._dtype).itemsize * capacity)
-                self._data: NDArray = np.ndarray(shape=(capacity,), dtype=self._dtype, buffer=self._data_shm.buf)
-                self._data.fill(0)
-
             if data:
-                if len(data) > self.capacity:
-                    data = data[: self.capacity]
-                self._data[: (len(data))] = data
-
-            try:
-                self._sum_shm = SharedMemory(name=f"{name}_sum")
-            except FileNotFoundError:
-                self._sum_shm = SharedMemory(name=f"{name}_sum", create=True, size=np.dtype(self._dtype).itemsize)
-            self._sum: NDArray = np.ndarray(shape=(), dtype=self._dtype, buffer=self._sum_shm.buf)
-            self._set_sum()
+                data = list(data)
+                if len(data) != self.capacity:
+                    if len(data) > self.capacity:
+                        data = data[: self.capacity]
+                    else:
+                        diff = self.capacity - len(data)
+                        data.extend([0] * diff)
+                self._data = manager.list(data)
+                self._sum = manager.Value("i", sum(self._data))
+            else:
+                self._data = manager.list([0] * capacity)
+                self._sum = manager.Value("i", 0)
 
     @property
     def sum(self) -> int:
         """Get the current sum of the storage."""
         with self._rlock:
             with self._lock:
-                return int(self._sum)
+                return deepcopy(self._sum.value)
 
     @property
-    def state(self) -> GateState:
+    def state(self) -> CallGateState:
         """Get the sum of all values in the storage."""
         with self._rlock:
             with self._lock:
-                return GateState(data=self._data.tolist(), sum=int(self._sum))
+                return CallGateState(data=list(self._data), sum=int(self._sum.value))
 
     def close(self) -> None:
         """Close storage memory segment."""
-        with self._rlock:
-            with self._lock:
-                self._data_shm.close()
-                _mute(self._data_shm.unlink)
-                self._sum_shm.close()
-                _mute(self._sum_shm.unlink)
-            self._lock.close()
+        pass
 
     def as_list(self) -> list:
         """Get the contents of the shared array as a regular list."""
         with self._rlock:
             with self._lock:
-                return self._data[:-1].tolist()
+                return deepcopy(self._data)
 
     def clear(self) -> None:
         """Clear the contents of the shared array.
@@ -161,8 +93,8 @@ class SharedMemoryStorage(BaseStorage):
         """
         with self._rlock:
             with self._lock:
-                self._data.fill(0)
-                self._sum[...] = 0
+                self._data[:] = [0] * self.capacity
+                self._sum.value = 0
 
     def slide(self, n: int) -> None:
         """Slide data to the right by n frames.
@@ -173,15 +105,14 @@ class SharedMemoryStorage(BaseStorage):
         """
         with self._rlock:
             with self._lock:
-                if n <= 0:
-                    pass
+                if n < 1:
+                    raise CallGateValueError("Value must be >= 1.")
                 if n >= self.capacity:
                     self.clear()
-                    self._sum[...] = 0
                 else:
                     self._data[n:] = self._data[:-n]
-                    self._data[:n] = 0
-                    self._set_sum()
+                    self._data[:n] = [0] * n
+                    self._sum.value = sum(self._data)
 
     def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
         """Atomically update the value of the most recent frame and the storage sum.
@@ -204,8 +135,7 @@ class SharedMemoryStorage(BaseStorage):
             with self._lock:
                 current_value = int(self._data[0])
                 new_value = current_value + value
-                current_sum = int(self._sum)
-                new_sum = current_sum + value
+                new_sum = self._sum.value + value
 
                 if 0 < frame_limit < new_value:
                     raise FrameLimitError("Frame limit exceeded")
@@ -217,15 +147,9 @@ class SharedMemoryStorage(BaseStorage):
                     raise FrameOverflowError("Frame value must be >= 0.")
 
                 self._data[0] = new_value
-                self._sum[...] = new_sum
+                self._sum.value = new_sum
 
     def __getitem__(self, index: int) -> int:
         with self._rlock:
             with self._lock:
                 return int(self._data[index])
-
-    def __setitem__(self, index: int, value: int) -> None:
-        with self._rlock:
-            with self._lock:
-                self._data[index] = value
-                self._set_sum()
