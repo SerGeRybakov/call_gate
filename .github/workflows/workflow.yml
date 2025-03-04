@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  GITHUB_ACTIONS_REDIS_TIMEOUT: 120
+  GITHUB_ACTIONS_REDIS_TIMEOUT: 60
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
