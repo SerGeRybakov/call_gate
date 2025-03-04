@@ -11,7 +11,7 @@ from call_gate import GateStorageType
 GITHUB_ACTIONS_REDIS_TIMEOUT = int(os.getenv("GITHUB_ACTIONS_REDIS_TIMEOUT", "60"))
 
 github_actions = os.getenv("GITHUB_ACTIONS") == "true"
-xfail_marker = pytest.mark.xfail(reason="Timeout on Redis expected in GitHub Actions") if github_actions else None
+xfail_marker = pytest.mark.xfail(reason="Timeout on Redis expected in GitHub Actions") if github_actions else []
 
 storages = [
     "simple",
