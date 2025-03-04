@@ -25,6 +25,7 @@ classifiers = [
 ]
 
 [tool.poetry-dynamic-versioning]
+enabled = true
 vcs = "git"
 style = "semver"
 metadata = false

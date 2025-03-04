@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
+      - '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)*)?$'
   pull_request:
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 1
+#      max-parallel: 3
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
 
@@ -82,6 +82,7 @@ jobs:
         shell: bash
 
   coverage:
+    needs: [ build ]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -123,9 +124,14 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: |
-          poetry run coverage run -m pytest --cov=call_gate
+          poetry run coverage run -m pytest --cov-branch --cov-report=xml
           poetry run coverage report
         shell: bash
+
+      - name: Upload results to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Stop Docker services
         if: always()
@@ -133,7 +139,7 @@ jobs:
         shell: bash
 
   publish:
-    needs: [build, coverage]
+    needs: [ build, coverage ]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
 
@@ -159,7 +165,10 @@ jobs:
 
       - name: Extract version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Extracted version: $VERSION"
 
       - name: Validate semver (with optional postfix)
         run: |
@@ -167,6 +176,14 @@ jobs:
             echo "❌ Invalid version format: $VERSION"
             exit 1
           fi
+        shell: bash
+
+      - name: Update version in pyproject.toml using sed
+        run: |
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          git add pyproject.toml
+          git commit -m "Update version to $VERSION in pyproject.toml"
+          git push
         shell: bash
 
       - name: Ensure version matches pyproject.toml

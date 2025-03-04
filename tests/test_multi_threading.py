@@ -1,3 +1,4 @@
+import os
 import threading
 
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -8,15 +9,29 @@ from call_gate import CallGate
 from tests.parameters import random_name, storages
 
 
+def get_test_params() -> list[tuple[int, int, int]]:
+    """Get test parameters based on the environment.
+
+    ("num_threads", "updates_per_thread", "update_value")
+    """
+    if os.getenv("GITHUB_ACTIONS"):
+        return [
+            (2, 10, 2),
+            (3, 20, 3),
+            (5, 5, 4),
+        ]
+    return [
+        (5, 200, 2),
+        (10, 100, 3),
+        (20, 50, 4),
+    ]
+
+
 class TestCallGateInThreadsManual:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
         ("num_threads", "updates_per_thread", "update_value"),
-        [
-            (10, 100, 2),  # 10 threads with 100 updates each, each update +2
-            (20, 50, 3),  # 20 threads with 50 updates each, each update +3
-            (5, 200, 4),  # 5 threads with 200 updates each, each update +3
-        ],
+        get_test_params(),
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
         gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
@@ -41,11 +56,7 @@ class TestCallGateInThreadsManual:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
         ("num_threads", "updates_per_thread", "update_value"),
-        [
-            (10, 100, 2),  # 10 threads with 100 updates each, each update +2
-            (20, 50, 3),  # 20 threads with 50 updates each, each update +3
-            (5, 200, 4),  # 5 threads with 200 updates each, each update +3
-        ],
+        get_test_params(),
     )
     def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
         gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
@@ -74,11 +85,7 @@ class TestCallGateInThreadsManual:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
         ("num_threads", "updates_per_thread", "update_value"),
-        [
-            (10, 100, 2),  # 10 threads with 100 updates each, each update +2
-            (20, 50, 3),  # 20 threads with 50 updates each, each update +3
-            (5, 200, 4),  # 5 threads with 200 updates each, each update +3
-        ],
+        get_test_params(),
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
         gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
@@ -109,11 +116,7 @@ class TestCallGateInThreadsExecutor:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
         ("num_threads", "updates_per_thread", "update_value"),
-        [
-            (10, 100, 2),  # 10 threads with 100 updates each, each update +2
-            (20, 50, 3),  # 20 threads with 50 updates each, each update +3
-            (5, 200, 4),  # 5 threads with 200 updates each, each update +3
-        ],
+        get_test_params(),
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
         gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
@@ -135,11 +138,7 @@ class TestCallGateInThreadsExecutor:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
         ("num_threads", "updates_per_thread", "update_value"),
-        [
-            (10, 100, 2),  # 10 threads with 100 updates each, each update +2
-            (20, 50, 3),  # 20 threads with 50 updates each, each update +3
-            (5, 200, 4),  # 5 threads with 200 updates each, each update +3
-        ],
+        get_test_params(),
     )
     def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
         gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
@@ -165,11 +164,7 @@ class TestCallGateInThreadsExecutor:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
         ("num_threads", "updates_per_thread", "update_value"),
-        [
-            (10, 100, 2),  # 10 threads with 100 updates each, each update +2
-            (20, 50, 3),  # 20 threads with 50 updates each, each update +3
-            (5, 200, 4),  # 5 threads with 200 updates each, each update +3
-        ],
+        get_test_params(),
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
         gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)

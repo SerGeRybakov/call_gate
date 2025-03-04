@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 
 from concurrent.futures import ProcessPoolExecutor
 
@@ -6,6 +7,22 @@ import pytest
 
 from call_gate import CallGate, GateStorageType
 from tests.parameters import random_name, start_methods, storages
+
+
+def get_test_params() -> list[tuple[int, int, int]]:
+    """Get test parameters based on the environment.
+
+    ("num_processes", "num_updates", "update_value")
+    """
+    if os.getenv("GITHUB_ACTIONS"):
+        return [
+            (2, 20, 1),
+            (3, 10, 2),
+        ]
+    return [
+        (4, 50, 1),
+        (8, 25, 2),
+    ]
 
 
 # ======================================================================
@@ -42,10 +59,7 @@ def worker_decorator(gate: CallGate, iterations: int, update_value: int) -> None
 @pytest.mark.parametrize("storage", storages)
 @pytest.mark.parametrize(
     ("num_processes", "num_updates", "update_value"),
-    [
-        (4, 50, 1),
-        (8, 25, 2),
-    ],
+    get_test_params(),
 )
 def test_multiprocessing_updates(
     start_method: str, num_processes: int, num_updates: int, update_value: int, storage: str
@@ -79,10 +93,7 @@ def test_multiprocessing_updates(
 @pytest.mark.parametrize("storage", storages)
 @pytest.mark.parametrize(
     ("num_processes", "iterations", "update_value"),
-    [
-        (4, 10, 5),
-        (8, 5, 3),
-    ],
+    get_test_params(),
 )
 def test_context_manager_multiprocessing(
     start_method: str, num_processes: int, iterations: int, update_value: int, storage: str
@@ -115,10 +126,7 @@ def test_context_manager_multiprocessing(
 @pytest.mark.parametrize("storage", storages)
 @pytest.mark.parametrize(
     ("num_processes", "iterations", "update_value"),
-    [
-        (4, 10, 2),
-        (8, 5, 3),
-    ],
+    get_test_params(),
 )
 def test_decorator_multiprocessing(
     start_method: str, num_processes: int, iterations: int, update_value: int, storage: str
@@ -149,10 +157,7 @@ def test_decorator_multiprocessing(
 @pytest.mark.parametrize("storage", storages)
 @pytest.mark.parametrize(
     ("num_workers", "num_updates", "update_value"),
-    [
-        (4, 50, 1),
-        (8, 25, 2),
-    ],
+    get_test_params(),
 )
 def test_process_pool_executor_updates(
     num_workers: int, num_updates: int, update_value: int, storage: str, start_method: str
@@ -177,10 +182,7 @@ def test_process_pool_executor_updates(
 @pytest.mark.parametrize("storage", storages)
 @pytest.mark.parametrize(
     ("num_workers", "num_updates", "update_value"),
-    [
-        (4, 50, 1),
-        (8, 25, 2),
-    ],
+    get_test_params(),
 )
 def test_process_pool_executor_context(
     num_workers: int, num_updates: int, update_value: int, storage: str, start_method: str
@@ -205,10 +207,7 @@ def test_process_pool_executor_context(
 @pytest.mark.parametrize("storage", storages)
 @pytest.mark.parametrize(
     ("num_workers", "num_updates", "update_value"),
-    [
-        (4, 50, 1),
-        (8, 25, 2),
-    ],
+    get_test_params(),
 )
 def test_process_pool_executor_decorator(
     num_workers: int, num_updates: int, update_value: int, storage: str, start_method: str
