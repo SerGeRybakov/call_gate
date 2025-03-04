@@ -52,7 +52,7 @@ jobs:
         run: |
           docker compose version
           docker compose up -d
-          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
+          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli -h redis ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
           if [ $? -ne 0 ]; then
             echo "Redis did not start in time" && exit 1
           fi
@@ -106,7 +106,7 @@ jobs:
         run: |
           docker compose version
           docker compose up -d
-          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
+          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli -h redis ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
           if [ $? -ne 0 ]; then
             echo "Redis did not start in time" && exit 1
           fi
