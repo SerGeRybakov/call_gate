@@ -62,7 +62,7 @@ jobs:
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-        run: poetry run -m pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml ./tests
+        run: poetry run pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml ./tests
         shell: bash
 
       - name: Upload results to Codecov
