@@ -4,3 +4,8 @@ services:
     ports:
       - 6379:6379
     restart: 'no'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

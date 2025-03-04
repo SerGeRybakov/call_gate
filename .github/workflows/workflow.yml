@@ -18,71 +18,7 @@ permissions:
   id-token: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-#      max-parallel: 3
-      matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install Poetry
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry
-
-      - name: Install dependencies
-        run: poetry install --no-interaction --with=dev
-        shell: bash
-
-      - name: Check code style and type checks
-        run: |
-          poetry run ssort ./call_gate
-          poetry run ruff format ./call_gate
-          poetry run ruff check ./call_gate --diff
-          poetry run mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
-        shell: bash
-
-      - name: Docker Compose steps
-        run: |
-          docker compose version
-          docker compose up -d
-          for i in {1..10}; do
-            if docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; then
-              echo "Redis is ready!"
-              exit 0
-            fi
-            echo "Waiting for Redis..."
-            sleep 2
-          done
-          echo "Redis did not start in time" && exit 1
-        shell: bash
-
-      - name: Run tests
-        env:
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-        run: poetry run pytest --disable-warnings -q --tb=auto
-        shell: bash
-
-      - name: Stop Docker services
-        if: always()
-        run: docker compose down
-        shell: bash
-
-  coverage:
-    needs: [ build ]
+  lint_coverage:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -104,28 +40,29 @@ jobs:
         run: poetry install --no-interaction --with=dev
         shell: bash
 
-      - name: Docker Compose steps
+      - name: Check code style and type checks
+        run: |
+          poetry run ssort ./call_gate
+          poetry run ruff format ./call_gate
+          poetry run ruff check ./call_gate --diff
+          poetry run mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
+        shell: bash
+
+      - name: Docker Compose steps (for coverage)
         run: |
           docker compose version
           docker compose up -d
-          for i in {1..10}; do
-            if docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; then
-              echo "Redis is ready!"
-              exit 0
-            fi
-            echo "Waiting for Redis..."
-            sleep 2
-          done
-          echo "Redis did not start in time" && exit 1
+          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
+          if [ $? -ne 0 ]; then
+            echo "Redis did not start in time" && exit 1
+          fi
         shell: bash
 
       - name: Run tests with coverage
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-        run: |
-          poetry run coverage run -m pytest --cov-branch --cov-report=xml
-          poetry run coverage report
+        run: poetry run -m pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml ./tests
         shell: bash
 
       - name: Upload results to Codecov
@@ -138,11 +75,59 @@ jobs:
         run: docker compose down
         shell: bash
 
+  matrix_tests:
+    needs: lint_coverage
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --with=dev
+        shell: bash
+
+      - name: Docker Compose steps (for matrix tests)
+        run: |
+          docker compose version
+          docker compose up -d
+          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
+          if [ $? -ne 0 ]; then
+            echo "Redis did not start in time" && exit 1
+          fi
+        shell: bash
+
+      - name: Run tests
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: poetry run pytest
+        shell: bash
+
+      - name: Stop Docker services
+        if: always()
+        run: docker compose down
+        shell: bash
+
   publish:
-    needs: [ build, coverage ]
+    needs: matrix_tests
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
