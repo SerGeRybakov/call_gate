@@ -1,4 +1,5 @@
 import random
+import sys
 import time
 
 from copy import deepcopy
@@ -15,8 +16,7 @@ from call_gate.errors import (
     GateLimitError,
     GateOverflowError,
 )
-from tests.conftest import random_name
-from tests.parameters import storages
+from tests.parameters import random_name, storages
 
 
 class TestCallGateInit:
@@ -43,7 +43,7 @@ class TestCallGateInit:
         ],
     )
     def test_init_success(self, gate_size, frame_step, storage):
-        gate = CallGate("init success", gate_size, frame_step, storage=storage)
+        gate = CallGate(random_name(), gate_size, frame_step, storage=storage)
         assert gate is not None
         if not isinstance(gate_size, timedelta):
             gate_size = timedelta(seconds=gate_size)
@@ -202,10 +202,10 @@ class TestCallGateInit:
             ([1, 2], [1, 2] + [0] * 8),
             ([1] * 20, [1] * 10),
             ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-            (None, [0] * 10)
+            (None, [0] * 10),
         ],
     )
-    def test_init_data(self, initial, expected, storage):
+    def test_init_data_correct(self, initial, expected, storage):
         gate = CallGate(random_name(), 10, 1, _data=initial, storage=storage)
         try:
             assert gate.data == expected
@@ -274,7 +274,6 @@ class TestCallGateInit:
             ["2024-01-01T00:00:00Z", True],
             ["2024-01-01T00:00:00Z", False],
             ("1",),
-            ("1",),
             ["2024"],
             ["2024-1-1T00:00:00Z"],
             ["2024-01-01T00:00:00Z", "2024-01-01T00:00:01Z", "2024-01-01T00:00:02Z"],
@@ -298,9 +297,18 @@ class TestCallGateInit:
             "2024-01-01  00:00:00Z",
             "",
             "   ",
-            "20240101000000Z",
-            "20240101 000000Z",
-            "20240101-000000Z",
+            pytest.param(
+                "20240101000000Z",
+                marks=pytest.mark.xfail(sys.version_info >= (3, 11), reason="Behaviour changed in 3.11", strict=True),
+            ),
+            pytest.param(
+                "20240101 000000Z",
+                marks=pytest.mark.xfail(sys.version_info >= (3, 11), reason="Behaviour changed in 3.11", strict=True),
+            ),
+            pytest.param(
+                "20240101-000000Z",
+                marks=pytest.mark.xfail(sys.version_info >= (3, 11), reason="Behaviour changed in 3.11", strict=True),
+            ),
         ],
     )
     def test_init_timestamps_fail_on_value(self, current_dt, storage):
@@ -336,16 +344,20 @@ class TestCallGateInit:
         for _ in range(100):
             old_gate.update(random.randint(3, 5))
         new_gate = CallGate(**old_gate.as_dict())
-        assert new_gate.gate_size == old_gate.gate_size
-        assert new_gate.frame_step == old_gate.frame_step
-        assert new_gate.gate_limit == old_gate.gate_limit
-        assert new_gate.frame_limit == old_gate.frame_limit
-        assert new_gate.frames == old_gate.frames
-        assert new_gate.current_dt == old_gate.current_dt
-        assert new_gate.data == old_gate.data
-        assert new_gate.sum == old_gate.sum
-        assert new_gate.timezone == old_gate.timezone
-        assert new_gate.storage == old_gate.storage
+        try:
+            assert new_gate.gate_size == old_gate.gate_size
+            assert new_gate.frame_step == old_gate.frame_step
+            assert new_gate.gate_limit == old_gate.gate_limit
+            assert new_gate.frame_limit == old_gate.frame_limit
+            assert new_gate.frames == old_gate.frames
+            assert new_gate.current_dt == old_gate.current_dt
+            assert new_gate.data == old_gate.data
+            assert new_gate.sum == old_gate.sum
+            assert new_gate.timezone == old_gate.timezone
+            assert new_gate.storage == old_gate.storage
+        finally:
+            old_gate.clear()
+            new_gate.clear()
 
     @pytest.mark.parametrize(
         "tz",
@@ -360,7 +372,7 @@ class TestCallGateInit:
         ],
     )
     def test_timezone(self, tz):
-        gate = CallGate("tz", 2, 1, timezone=tz)
+        gate = CallGate(random_name(), 2, 1, timezone=tz)
         gate.update()
         gate_dict = gate.as_dict()
         try:
@@ -427,28 +439,40 @@ class TestCallGateUpdate:
         ],
     )
     def test_increment_value_fails_on_type(self, call_gate_2s_1s_no_limits, value):
-        with pytest.raises(TypeError):
-            assert call_gate_2s_1s_no_limits.update(value)
+        try:
+            with pytest.raises(TypeError):
+                assert call_gate_2s_1s_no_limits.update(value)
+        finally:
+            call_gate_2s_1s_no_limits.clear()
 
     @pytest.mark.parametrize("throw", [True, False])
     @pytest.mark.parametrize("value", [-1, -2, -(2**64 - 1)])
     def test_increment_value_fails_on_negative_sum(self, call_gate_2s_1s_no_limits, value, throw):
-        with pytest.raises(GateOverflowError):
-            assert call_gate_2s_1s_no_limits.update(value, throw=throw)
+        try:
+            with pytest.raises(GateOverflowError):
+                assert call_gate_2s_1s_no_limits.update(value, throw=throw)
+        finally:
+            call_gate_2s_1s_no_limits.clear()
 
     @pytest.mark.parametrize("throw", [True, False])
     def test_increment_value_fails_on_negative_frame(self, call_gate_2s_1s_no_limits, throw):
         for _ in range(2):
             call_gate_2s_1s_no_limits.update()
         time.sleep(1)
-        with pytest.raises(FrameOverflowError):
-            assert call_gate_2s_1s_no_limits.update(-1, throw=throw)
+        try:
+            with pytest.raises(FrameOverflowError):
+                assert call_gate_2s_1s_no_limits.update(-1, throw=throw)
+        finally:
+            call_gate_2s_1s_no_limits.clear()
 
     def test_increment_until_full(self, call_gate_2s_1s_no_limits):
         start = datetime.now()
-        while datetime.now() < start + timedelta(seconds=2):
-            call_gate_2s_1s_no_limits.update()
-        assert len(call_gate_2s_1s_no_limits.data) == call_gate_2s_1s_no_limits.frames
+        try:
+            while datetime.now() < start + timedelta(seconds=2):
+                call_gate_2s_1s_no_limits.update()
+            assert len(call_gate_2s_1s_no_limits.data) == call_gate_2s_1s_no_limits.frames
+        finally:
+            call_gate_2s_1s_no_limits.clear()
 
     @pytest.mark.flaky(retries=3, delay=1)
     def test_increment_replaces_old_data(self, call_gate_2s_1s_no_limits):
@@ -457,17 +481,21 @@ class TestCallGateUpdate:
         while datetime.now() < start + timedelta(seconds=work):
             call_gate_2s_1s_no_limits.update()
         first_cur_frame_time = call_gate_2s_1s_no_limits.current_frame.dt
-        assert int(first_cur_frame_time.timestamp()) == int(datetime.now().timestamp())
-        assert len(call_gate_2s_1s_no_limits.data) == call_gate_2s_1s_no_limits.frames
-        gate_sum = call_gate_2s_1s_no_limits.sum
-        last_data = call_gate_2s_1s_no_limits.last_frame.value
-        time.sleep(1)
-        call_gate_2s_1s_no_limits.update()
-        assert first_cur_frame_time == call_gate_2s_1s_no_limits.last_frame.dt
-        assert (
-            round(call_gate_2s_1s_no_limits.current_frame.dt.timestamp()) == round(first_cur_frame_time.timestamp()) + 1
-        )
-        assert call_gate_2s_1s_no_limits.sum == (gate_sum - last_data + 1)
+        try:
+            assert int(first_cur_frame_time.timestamp()) == int(datetime.now().timestamp())
+            assert len(call_gate_2s_1s_no_limits.data) == call_gate_2s_1s_no_limits.frames
+            gate_sum = call_gate_2s_1s_no_limits.sum
+            last_data = call_gate_2s_1s_no_limits.last_frame.value
+            time.sleep(1)
+            call_gate_2s_1s_no_limits.update()
+            assert first_cur_frame_time == call_gate_2s_1s_no_limits.last_frame.dt
+            assert (
+                round(call_gate_2s_1s_no_limits.current_frame.dt.timestamp())
+                == round(first_cur_frame_time.timestamp()) + 1
+            )
+            assert call_gate_2s_1s_no_limits.sum == (gate_sum - last_data + 1)
+        finally:
+            call_gate_2s_1s_no_limits.clear()
 
     def test_increment_replaces_old_data_after_long_sleep(self, call_gate_2s_1s_no_limits):
         start = datetime.now()
@@ -500,12 +528,15 @@ class TestCallGateUpdate:
         time.sleep(sleep)
         call_gate.update()
         ndata = list(call_gate.data)
-        assert dt == call_gate.current_dt - call_gate.frame_step * sleep
-        assert call_gate.data[sleep - 1] == 0
-        assert odata[:sleep] == ndata[sleep:]
-        assert call_gate.sum < gate_sum
+        try:
+            assert dt == call_gate.current_dt - call_gate.frame_step * sleep
+            assert call_gate.data[sleep - 1] == 0
+            assert odata[:sleep] == ndata[sleep:]
+            assert call_gate.sum < gate_sum
+        finally:
+            call_gate.clear()
 
-    def test_clean(self, call_gate_2s_1s_no_limits):
+    def test_clear(self, call_gate_2s_1s_no_limits):
         assert len(call_gate_2s_1s_no_limits) == 2
         assert call_gate_2s_1s_no_limits.sum == 0
         assert call_gate_2s_1s_no_limits.data == [0, 0]
@@ -528,32 +559,41 @@ class TestCallGateUpdate:
 class TestCallGateLimits:
     def test_gate_limit(self, call_gate_2s_1s_gl5):
         start = datetime.now()
-        with pytest.raises(GateLimitError):
-            while datetime.now() < start + timedelta(seconds=call_gate_2s_1s_gl5.gate_size.total_seconds()):
-                call_gate_2s_1s_gl5.update(throw=True)
+        try:
+            with pytest.raises(GateLimitError):
+                while datetime.now() < start + timedelta(seconds=call_gate_2s_1s_gl5.gate_size.total_seconds()):
+                    call_gate_2s_1s_gl5.update(throw=True)
+        finally:
+            call_gate_2s_1s_gl5.clear()
 
     def test_frame_limit(self, call_gate_2s_1s_fl5):
         start = datetime.now()
-        with pytest.raises(FrameLimitError):
-            while datetime.now() < start + timedelta(seconds=call_gate_2s_1s_fl5.gate_size.total_seconds()):
-                call_gate_2s_1s_fl5.update(throw=True)
+        try:
+            with pytest.raises(FrameLimitError):
+                while datetime.now() < start + timedelta(seconds=call_gate_2s_1s_fl5.gate_size.total_seconds()):
+                    call_gate_2s_1s_fl5.update(throw=True)
+        finally:
+            call_gate_2s_1s_fl5.clear()
 
     def test_both_limits(self):
         call_gate = CallGate(random_name(), timedelta(seconds=4), timedelta(seconds=1), gate_limit=4, frame_limit=2)
         call_gate.update(2)
-        with pytest.raises(FrameLimitError):
-            call_gate.update(throw=True)
-        time.sleep(1.1)
-        call_gate.update(2)
-        assert call_gate.sum == call_gate.gate_limit
-        time.sleep(1.1)
-        with pytest.raises(GateLimitError):
-            call_gate.update(throw=True)
+        try:
+            with pytest.raises(FrameLimitError):
+                call_gate.update(throw=True)
+            time.sleep(1.1)
+            call_gate.update(2)
+            assert call_gate.sum == call_gate.gate_limit
+            time.sleep(1.1)
+            with pytest.raises(GateLimitError):
+                call_gate.update(throw=True)
+        finally:
+            call_gate.clear()
 
     @pytest.mark.parametrize("storage", storages)
     def test_check_limits_gate(self, storage):
         gate = CallGate(
-            "check_limits",
+            random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
             gate_limit=100,
@@ -573,7 +613,7 @@ class TestCallGateLimits:
     @pytest.mark.parametrize("storage", storages)
     def test_check_limits_frame(self, storage):
         gate = CallGate(
-            "check_limits",
+            random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
             gate_limit=100,

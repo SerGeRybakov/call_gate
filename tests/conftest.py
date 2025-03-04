@@ -1,15 +1,17 @@
+import faulthandler
+
 from datetime import timedelta
 
 import pytest
 
-from faker import Faker
-
 from call_gate import CallGate
-from tests.parameters import storages
+from tests.parameters import random_name, storages
 
 
-def random_name() -> str:
-    return Faker().word()
+def pytest_sessionstart(session):
+    """Enable faulthandler and make a stack dump if tests are stuck."""
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(60)
 
 
 @pytest.fixture(scope="function", params=storages)

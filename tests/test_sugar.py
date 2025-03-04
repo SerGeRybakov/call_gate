@@ -6,17 +6,12 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate
-from tests.conftest import random_name
-from tests.parameters import storages
+from tests.parameters import random_name, storages
 
 
 class TestSugar:
     @pytest.mark.parametrize("storage", storages)
-    @pytest.mark.parametrize(("iterations", "value"), [
-        (10, 5),
-        (10, 1),
-        (5, 3)
-    ])
+    @pytest.mark.parametrize(("iterations", "value"), [(10, 5), (10, 1), (5, 3)])
     def test_decorator(self, storage, iterations, value):
         gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage)
 
@@ -34,14 +29,9 @@ class TestSugar:
             gate.clear()
 
     @pytest.mark.parametrize("storage", storages)
-    @pytest.mark.parametrize(("iterations", "value"), [
-        (10, 5),
-        (10, 1),
-        (5, 3)
-    ])
+    @pytest.mark.parametrize(("iterations", "value"), [(10, 5), (10, 1), (5, 3)])
     def test_context_manager(self, storage, iterations, value):
         gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage)
-
 
         for _ in range(iterations):
             with gate(value=value):

@@ -5,9 +5,8 @@ CallGate - Awesome Rate Limiter
 Overview
 --------
 
-This project implements a sliding window time-bound rate limiter, which allows tracking events over a configurable
-time window divided into equal frames. Each frame tracks increments and decrements within a specific time period
-defined by the ``frame_step``.
+This project implements a sliding window time-bound rate limiter, which allows tracking events over a configurabletime window divided into equal frames. Each frame tracks increments and decrements within a specific time period
+defined by the frame step.
 
 The CallGate maintains only the values within the set bounds, automatically removing outdated frames as new
 periods start.
@@ -36,7 +35,6 @@ You can install CallGate using pip::
 You may also optionally install redis along with ``call_gate``::
 
     pip install call_gate[redis]
-
 
 Usage
 -----
@@ -71,6 +69,8 @@ Basically, the gate has two limits:
 
 - ``gate_limit``: how many values can be in the whole gate
 - ``frame_limit``: granular limit for each frame in the gate.
+
+Both of them a set to zero by default. You can set any of them as follows:
 
 For example::
 
@@ -261,10 +261,3 @@ Contributing
 ------------
 
 Contributions are welcome! If you have any ideas or bug reports, please open an issue or submit a pull request.
-
-
-Exceptions
-~~~~~~~~~~
-
-- ``FrameLimitError``: Raised when the frame limit is exceeded.
-- ``GateLimitError``: Raised when the gate limit is exceeded.

@@ -1,10 +1,11 @@
 import threading
+
 from concurrent.futures.thread import ThreadPoolExecutor
 
 import pytest
 
 from call_gate import CallGate
-from tests.parameters import storages
+from tests.parameters import random_name, storages
 
 
 class TestCallGateInThreadsManual:
@@ -18,7 +19,7 @@ class TestCallGateInThreadsManual:
         ],
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate("tp_gate", gate_size=2, frame_step=1, storage=storage)
+        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def worker():
             for _ in range(updates_per_thread):
@@ -46,10 +47,8 @@ class TestCallGateInThreadsManual:
             (5, 200, 4),  # 5 threads with 200 updates each, each update +3
         ],
     )
-    def test_decorated_function_concurrent(
-        self, num_threads, updates_per_thread, update_value, storage
-    ):
-        gate = CallGate("tp_gate_decorated", gate_size=2, frame_step=1, storage=storage)
+    def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
+        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         @gate(update_value)
         def dummy_function():
@@ -82,7 +81,7 @@ class TestCallGateInThreadsManual:
         ],
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate("tp_gate_context", gate_size=2, frame_step=1, storage=storage)
+        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def dummy_function(gate: "CallGate", update_value):
             # Any function that returns a result
@@ -104,6 +103,7 @@ class TestCallGateInThreadsManual:
             assert gate.sum == expected
         finally:
             gate.clear()
+
 
 class TestCallGateInThreadsExecutor:
     @pytest.mark.parametrize("storage", storages)
@@ -116,7 +116,7 @@ class TestCallGateInThreadsExecutor:
         ],
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate("tpe_gate", gate_size=2, frame_step=1, storage=storage)
+        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def worker(*args, **kwargs):
             for _ in range(updates_per_thread):
@@ -141,10 +141,8 @@ class TestCallGateInThreadsExecutor:
             (5, 200, 4),  # 5 threads with 200 updates each, each update +3
         ],
     )
-    def test_decorated_function_concurrent(
-        self, num_threads, updates_per_thread, update_value, storage
-    ):
-        gate = CallGate("tpe_gate_decorator", gate_size=2, frame_step=1, storage=storage)
+    def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
+        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         @gate(update_value)
         def dummy_function():
@@ -174,7 +172,7 @@ class TestCallGateInThreadsExecutor:
         ],
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate("tpe_gate_context", gate_size=2, frame_step=1, storage=storage)
+        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def dummy_function(gate: "CallGate", update_value):
             # Any function that returns a result
@@ -193,6 +191,7 @@ class TestCallGateInThreadsExecutor:
             assert gate.sum == expected
         finally:
             gate.clear()
+
 
 if __name__ == "__main__":
     pytest.main()

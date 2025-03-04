@@ -35,14 +35,11 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.extras]
 redis = ["redis"]
-numpy = ["numpy"]
-all = ["redis", "numpy"]
 
 [tool.poetry.dependencies]
 python = ">=3.9 <4"
 typing-extensions = ">=4.12.2"
 redis = { version = ">=5.0.0", optional = true }
-numpy = { version = ">=1.20 <3", optional = true }
 
 [tool.poetry.group.dev.dependencies]
 python-dateutil = ">=2.9.0.post0"
@@ -63,7 +60,6 @@ pytest-deadfixtures = ">=2.2.1"
 pytest-timeout = ">=2.3.1"
 bandit = ">=1.7.5"
 deptry = ">=0.6.4"
-numpy = ">=1.20.0 <3"
 redis = ">=5.0.0"
 faker = ">=19.0.0"
 
@@ -83,46 +79,55 @@ doc8 = ">=1.1.2"
 [tool.ruff]
 target-version = "py39"
 line-length = 120
-extend-exclude = [".idea", ".vscode", ".fleet", "tests/"]
+extend-exclude = [".idea", ".vscode", ".fleet"]
 src = ["call_gate"]
 
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
 select = [
-  'F', # flake8
-  'C90', # mccabe
-  'I', # isort
-  'UP', # pyupgrade
-  'S', # flake8-bandit
   'ASYNC', # flake8-async
   'B', # flake8-bugbear
-  'Q', # flake8-quotes
-  'TCH', # flake8-type-checking
-  'PTH', # flake8-use-pathlib
+  'C90', # mccabe
   'D', # pydocstyle
-  'W', # pycodestyle (warnings)
   'E', # pycodestyle (errors)
+  'F', # flake8
+  'I', # isort
   'N', # pep8-naming
-  'PT', # flake8-pytest-style
   'PL', # pylint
-  'TID', # flake8-tidy-imports
+  'PTH', # flake8-use-pathlib
+  'PT', # flake8-pytest-style
+  'Q', # flake8-quotes
   'RUF', # ruff-specific rules
+  'S', # flake8-bandit
+  'TCH', # flake8-type-checking
+  'TID', # flake8-tidy-imports
+  'UP', # pyupgrade
+  'W', # pycodestyle (warnings)
 ]
 
 ignore = [
-  "D105",
-  "D107",
-  "S112",
+  "D105",  # missing docstring in __init__
+  "D107",  # missing docstring in __init__
 ]
 
 # https://docs.astral.sh/ruff/settings/#extend-per-file-ignores
 [tool.ruff.lint.extend-per-file-ignores]
-'__init__.py' = [
+"__init__.py" = [
   "D104", # missing-module-docstring
-  "F401", # {name} imported but unused; consider using importlib.util.find_spec to test for availability
-  "F403", # from {name} import * used; unable to detect undefined names
-  "F405", # {name} may be undefined, or defined from star imports
-  "TID252", # Relative imports from parent modules are banned
+]
+
+"tests/**" = [
+  "D100",  # Missing docstring in public module
+  "D101",  # Missing docstring in public class
+  "D102",  # Missing docstring in public method
+  "D103",  # Missing docstring in public function
+  "PLR2004",  # Consider using 'with' for resource-allocating operations
+  "PT003",  # Missing docstring in public method
+  "PT011",  # Missing type annotation for function return value
+  "PT012",  # Missing type annotation for 'self' in method
+  "PTH123",  # Use 'os.path' instead of 'pathlib.Path'
+  "S101",  # Use of assert detected
+  "S311",  # Standard pseudo-random generators are not suitable for security/cryptographic purposes
 ]
 
 # https://docs.astral.sh/ruff/settings/#lintpylint
@@ -234,7 +239,7 @@ omit = [
 directory = "tests/code_coverage"
 
 [tool.coverage.report]
-fail_under = 95
+fail_under = 97
 exclude_lines = [
   "no cov",
   "pragma: no cover",

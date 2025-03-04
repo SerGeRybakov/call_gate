@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
   pull_request:
   workflow_dispatch:
 
@@ -13,12 +15,14 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
 
@@ -33,30 +37,27 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install poetry
-        uses: snok/install-poetry@v1.3.4
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
 
       - name: Install dependencies
-        run: poetry install
+        run: poetry install --no-interaction --with=dev
         shell: bash
 
       - name: Check code style and type checks
         run: |
-          source .venv/bin/activate
-          ssort ./call_gate
-          ruff format ./call_gate
-          ruff check ./call_gate --diff
-          mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
+          poetry run ssort ./call_gate
+          poetry run ruff format ./call_gate
+          poetry run ruff check ./call_gate --diff
+          poetry run mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
         shell: bash
 
       - name: Docker Compose steps
         run: |
           docker compose version
           docker compose up -d
-          # Ждём, пока Redis станет готов
           for i in {1..10}; do
             if docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; then
               echo "Redis is ready!"
@@ -72,13 +73,115 @@ jobs:
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-        run: |
-          source .venv/bin/activate
-          coverage run -m pytest --cov=call_gate
-          coverage report
+        run: poetry run pytest --disable-warnings -q --tb=auto
         shell: bash
 
       - name: Stop Docker services
         if: always()
         run: docker compose down
+        shell: bash
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --with=dev
+        shell: bash
+
+      - name: Docker Compose steps
+        run: |
+          docker compose version
+          docker compose up -d
+          for i in {1..10}; do
+            if docker exec $(docker compose ps -q redis) redis-cli ping | grep -q PONG; then
+              echo "Redis is ready!"
+              exit 0
+            fi
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+          echo "Redis did not start in time" && exit 1
+        shell: bash
+
+      - name: Run tests with coverage
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          poetry run coverage run -m pytest --cov=call_gate
+          poetry run coverage report
+        shell: bash
+
+      - name: Stop Docker services
+        if: always()
+        run: docker compose down
+        shell: bash
+
+  publish:
+    needs: [build, coverage]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+        shell: bash
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Validate semver (with optional postfix)
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)*)?$ ]]; then
+            echo "❌ Invalid version format: $VERSION"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Ensure version matches pyproject.toml
+        run: |
+          PROJECT_VERSION=$(poetry version -s)
+          if [[ "$VERSION" != "$PROJECT_VERSION" ]]; then
+            echo "❌ Tag version ($VERSION) does not match pyproject.toml version ($PROJECT_VERSION)"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Build package
+        run: poetry build
+        shell: bash
+
+      - name: Publish to PyPI (Trusted Publishers)
+        run: poetry publish --no-interaction
         shell: bash
