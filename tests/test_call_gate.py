@@ -19,6 +19,7 @@ from call_gate.errors import (
 from tests.parameters import random_name, storages
 
 
+@pytest.mark.timeout(60)
 class TestCallGateInit:
     def test_empty_init_fails(self):
         with pytest.raises(TypeError):
@@ -390,6 +391,7 @@ class TestCallGateInit:
             gate.clear()
 
 
+@pytest.mark.timeout(60)
 class TestCallGateUpdate:
     def test_increment(self, call_gate_2s_1s_no_limits):
         try:
@@ -556,6 +558,7 @@ class TestCallGateUpdate:
         assert call_gate_2s_1s_no_limits.sum == initial_sum
 
 
+@pytest.mark.timeout(60)
 class TestCallGateLimits:
     def test_gate_limit(self, call_gate_2s_1s_gl5):
         start = datetime.now()

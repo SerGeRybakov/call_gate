@@ -34,6 +34,7 @@ async def worker_decorator(gate: CallGate, iterations: int, update_value: int) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 class TestCallGateAsyncioHelpers:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize("update_value", [1, 5, 10])
@@ -98,6 +99,7 @@ class TestCallGateAsyncioHelpers:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 class TestCallGateAsyncio:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize("update_value", [1, 5, 10])

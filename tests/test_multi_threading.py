@@ -27,6 +27,7 @@ def get_test_params() -> list[tuple[int, int, int]]:
     ]
 
 
+@pytest.mark.timeout(60)
 class TestCallGateInThreadsManual:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -112,6 +113,7 @@ class TestCallGateInThreadsManual:
             gate.clear()
 
 
+@pytest.mark.timeout(60)
 class TestCallGateInThreadsExecutor:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
