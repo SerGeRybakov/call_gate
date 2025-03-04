@@ -16,10 +16,10 @@ from call_gate.errors import (
     GateLimitError,
     GateOverflowError,
 )
-from tests.parameters import random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateInit:
     def test_empty_init_fails(self):
         with pytest.raises(TypeError):
@@ -391,7 +391,7 @@ class TestCallGateInit:
             gate.clear()
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateUpdate:
     def test_increment(self, call_gate_2s_1s_no_limits):
         try:
@@ -558,7 +558,7 @@ class TestCallGateUpdate:
         assert call_gate_2s_1s_no_limits.sum == initial_sum
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateLimits:
     def test_gate_limit(self, call_gate_2s_1s_gl5):
         start = datetime.now()

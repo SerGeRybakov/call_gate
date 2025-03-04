@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 import pytest
 
 from call_gate import CallGate, GateStorageType
-from tests.parameters import random_name, start_methods, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, start_methods, storages
 
 
 def get_test_params() -> list[tuple[int, int, int]]:
@@ -50,7 +50,7 @@ def worker_decorator(gate: CallGate, iterations: int, update_value: int) -> None
         dummy()
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateMultiprocessing:
     @pytest.mark.parametrize("start_method", start_methods)
     @pytest.mark.parametrize("storage", storages)
@@ -135,7 +135,7 @@ class TestCallGateMultiprocessing:
             gate.clear()
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateMultiprocessingExecutor:
     @pytest.mark.parametrize("start_method", start_methods)
     @pytest.mark.parametrize("storage", storages)

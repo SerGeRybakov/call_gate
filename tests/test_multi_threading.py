@@ -6,7 +6,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 import pytest
 
 from call_gate import CallGate
-from tests.parameters import random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
 
 
 def get_test_params() -> list[tuple[int, int, int]]:
@@ -27,7 +27,7 @@ def get_test_params() -> list[tuple[int, int, int]]:
     ]
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateInThreadsManual:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -113,7 +113,7 @@ class TestCallGateInThreadsManual:
             gate.clear()
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateInThreadsExecutor:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(

@@ -6,10 +6,10 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate
-from tests.parameters import random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestSugar:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(("iterations", "value"), [(3, 5), (4, 2), (5, 3)])

@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate, FrameLimitError, GateLimitError
-from tests.parameters import random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
 
 
 # ======================================================================
@@ -34,7 +34,7 @@ async def worker_decorator(gate: CallGate, iterations: int, update_value: int) -
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateAsyncioHelpers:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize("update_value", [1, 5, 10])
@@ -99,7 +99,7 @@ class TestCallGateAsyncioHelpers:
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
 class TestCallGateAsyncio:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize("update_value", [1, 5, 10])
