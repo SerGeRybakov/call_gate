@@ -23,6 +23,17 @@ permissions:
 jobs:
   lint_coverage:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,23 +62,6 @@ jobs:
           poetry run mypy ./call_gate --install-types --non-interactive --config-file pyproject.toml
         shell: bash
 
-      - name: Create .env file for Docker Compose
-        run: |
-          echo "REDIS_HOST=localhost" >> .env
-          echo "REDIS_PORT=6379" >> .env
-          echo "GITHUB_ACTIONS_REDIS_TIMEOUT=${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}" >> .env
-        shell: bash
-
-      - name: Docker Compose steps (for coverage)
-        run: |
-          docker compose version
-          docker compose up -d
-          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli -h redis ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
-          if [ $? -ne 0 ]; then
-            echo "Redis did not start in time" && exit 1
-          fi
-        shell: bash
-
       - name: Run tests with coverage
         env:
           REDIS_HOST: localhost
@@ -81,18 +75,24 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
-      - name: Stop Docker services
-        if: always()
-        run: docker compose down
-        shell: bash
-
   matrix_tests:
     needs: lint_coverage
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ '3.9', '3.10', '3.11', '3.12', '3.13' ]
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    services:
+      redis:
+        image: redis:latest
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -113,34 +113,12 @@ jobs:
         run: poetry install --no-interaction --with=dev
         shell: bash
 
-      - name: Create .env file for Docker Compose
-        run: |
-          echo "REDIS_HOST=localhost" >> .env
-          echo "REDIS_PORT=6379" >> .env
-          echo "GITHUB_ACTIONS_REDIS_TIMEOUT=${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}" >> .env
-        shell: bash
-
-      - name: Docker Compose steps (for matrix tests)
-        run: |
-          docker compose version
-          docker compose up -d
-          timeout 30 bash -c 'until docker exec $(docker compose ps -q redis) redis-cli -h redis ping | grep -q PONG; do echo "Waiting for Redis..."; sleep 2; done'
-          if [ $? -ne 0 ]; then
-            echo "Redis did not start in time" && exit 1
-          fi
-        shell: bash
-
       - name: Run tests
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
         run: poetry run pytest
-        shell: bash
-
-      - name: Stop Docker services
-        if: always()
-        run: docker compose down
         shell: bash
 
   publish:
