@@ -58,8 +58,12 @@ jobs:
         run: |
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
           git add pyproject.toml
-          git commit -m "Update version to $VERSION in pyproject.toml"
-          git push
+          if git diff-index --quiet HEAD; then
+            echo "No changes detected, skipping commit."
+          else
+            git commit -m "Update version to $VERSION in pyproject.toml"
+            git push
+          fi
 
       - name: Install dependencies
         run: poetry install --no-interaction
