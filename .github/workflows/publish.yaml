@@ -12,10 +12,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Checkout branch
-        run: git checkout main
+      - name: Checkout default branch
+        run: |
+          git fetch origin ${{ github.event.repository.default_branch }}
+          git checkout ${{ github.event.repository.default_branch }}
 
       - name: Configure Git
         run: |
