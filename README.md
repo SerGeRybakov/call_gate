@@ -212,18 +212,31 @@ if __name__ == "__main__":
 ### Handle Errors 
 
 The package provides a pack of custom exceptions. Basically, you may be interested in the following: 
+- `ThrottlingError` - a base limit error, raised when rate limits are reached or violated.
+- `FrameLimitError` - (derives from `ThrottlingError`) a limit error, raised when frame limit is reached or violated. 
+- `GateLimitError` - (derives from `ThrottlingError`) a limit error, raised when gate limit is reached or violated.
 
-``FrameLimitError`` 
-``GateLimitError``. 
-
+These errors are handled automatically by the library, but you may also choose to throw them explicitly by switching
+the `throw` parameter to `True`
 
 ```python
+from call_gate import FrameLimitError, GateLimitError, ThrottlingError
+
 while True:
     try:
         gate.update(5, throw=True)
-    except FrameLimitError:
-        print("Frame limit exceeded!")
+    except FrameLimitError as e:
+        print(f"Frame limit exceeded! {e}")
+    except GateLimitError as e:
+        print(f"Gate limit exceeded! {e}")
+        
+    # or
+    
+    # except ThrottlingError as e:
+    #    print(f"Throttling Error! {e}")
 ```
+
+The others may be found in [`call_gate.errors`](./call_gate/errors.py) module.
 
 ## Example
 
@@ -259,6 +272,19 @@ if __name__ == "__main__":
     print("Starting async", datetime.now())
     asyncio.run(async_dummy(gate))
 ```
+
+## Remarkable Notes
+- The package is compatible with Python 3.9+.
+- All the updates are atomic, so no race conditions shall occur.
+- The majority of Redis calls is performed via 
+[Lua-scripts](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/), what makes them run 
+on the Redis-server side.
+- The maximal value guaranteed for `in-memory` storages is `2**64 - 1`, but for Redis it is ``2**53 - 1``
+only because Redis uses [Lua 5.1](https://www.lua.org/manual/5.1/).  
+Lua 5.1 works with numbers as `double64` bit floating point numbers in 
+[IEEE 754](https://en.wikipedia.org/wiki/IEEE_754) standard. Starting from ``2**53`` Lua loses precision.  
+But for the purposes of this package even ``2**53 - 1`` is still big enough.
+
 
 ## Testing
 The code is covered with 1.5K test cases.

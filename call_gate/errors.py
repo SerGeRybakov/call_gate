@@ -73,15 +73,15 @@ class SpecialCallGateError(CallGateBaseError):
 
 
 class CallGateOverflowError(SpecialCallGateError, OverflowError):
-    """Overflow error."""
+    """Overflow error, raised when the value is less than 0."""
 
 
 class GateOverflowError(CallGateOverflowError):
-    """gate overflow error."""
+    """Gate overflow error, raised when the value is less than 0."""
 
 
 class FrameOverflowError(CallGateOverflowError):
-    """Frame overflow error."""
+    """Frame overflow error, raised when the value is less than 0."""
 
 
 class ThrottlingError(SpecialCallGateError):
