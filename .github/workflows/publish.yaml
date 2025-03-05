@@ -71,5 +71,8 @@ jobs:
       - name: Build package
         run: poetry build
 
+      - name: Configure PyPI token for Poetry
+        run: poetry config pypi-token.pypi ${{ secrets.PYPI_TOKEN }}
+
       - name: Publish to PyPI
         run: poetry publish --build --no-interaction
