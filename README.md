@@ -111,6 +111,44 @@ gate = CallGate(
     frame_limit=2
 )
 ```
+What does it mean? This gate has a total scope of 1 second divided by 1 millisecond, what makes this gate rather large:
+1000 frames. And the defined limits tell us that within each millisecond we can perform no more than 2 actions.
+
+f the limit is exceeded, we will have to wait until the next millisecond.
+But the gate limit will reduce us to 600 total actions during 1 second.
+
+You can easily calculate, that during 1 second we shall consume the major limit in the first 300 milliseconds
+and the rest of the time our code will be waiting until the total ``gate.sum`` is reduced.
+
+It will be reduced frame-by-frame. Each time, when the sliding window slides by one frame, a sum is recalculated.
+Thus, we will do 600 calls more or less quickly and after it we'll start doing slowly and peacefully, frame-by-frame:
+2 calls per 1 millisecond + waiting until the gate sum will be lower than 600.
+
+The best practice is to follow the rate-limit documentation of the service which you are using.
+
+For example, at the edge of 2024-2025 Gmail API has the following rate-limits for mail **sending**
+via 1 account (mailbox):
+- 2 emails per second, but no more than 1200 emails within last 10 minutes;
+- 2000 emails within last 24 hours.
+
+This leads us to the following:
+
+```python
+gate10m = CallGate(name="gmail10m",
+   gate_size=timedelta(minutes=10),
+   frame_step=timedelta(seconds=1),
+   gate_limit=1200,
+   frame_limit=2
+)
+
+gate24h = CallGate(name="gmail24h",
+   gate_size=timedelta(days=1),
+   frame_step=timedelta(minutes=1),
+   gate_limit=2000,
+)
+```
+Both of these windows should be used simultaneously in a sending script on each API call.
+
 While timedelta allows you to set even microseconds, you shall be a realist and remember that Python is not that fast.
 Some operations may definitely take some microseconds but usually your code needs some milliseconds or longer
 to switch context, perform a loop, etc. You should also consider network latency if you use remote Redis
