@@ -116,7 +116,7 @@ Some operations may definitely take some microseconds but usually your code need
 to switch context, perform a loop, etc. You should also consider network latency if you use remote Redis
 or make calls to other remote services.
 
-### Choose Storage Options
+### Choose Storage
 
 The library provides three storage options:
 
