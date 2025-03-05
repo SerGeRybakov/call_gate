@@ -157,8 +157,15 @@ Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 Actually, the only method you need is the ``update`` method:
 
 ```python
+# try to increment the current frame value by 1,
+# wait while any limit is exceeded
+# commit an increment when the "gate is open"
 gate.update()
-await gate.update(5, throw=True)
+
+await gate.update(
+          5,          # try to increment the current frame value by 5
+          throw=True  # throw an error if any limit is exceeded
+      )
 ```
 
 ### Use as a Decorator
@@ -238,6 +245,41 @@ while True:
 
 The others may be found in [`call_gate.errors`](./call_gate/errors.py) module.
 
+### Persist and Restore
+
+If you need to persist the state of the gate between restarts, you can use the `gate.to_file({file_path})` method.  
+
+To restore the state you can use the `restored = CallGate.from_file({file_path})` method.  
+
+If you wish to restore the state using another storage type, you can pass the desired type as a keyword parameter to 
+`restored = CallGate.from_metadata({file_path}, storage={storage_type})`method.
+
+Redis persists the gate's state automatically until you restart its container without having shared volumes or clear 
+the Redis database. But still you can save its state to the file and to restore it as well.
+
+You may also use the `gate.as_dict()` method to get the state of the gate as a dictionary.
+
+### Explore the Properties
+The `CallGate` has a lot of useful properties:
+
+```python
+gate.name           # get the name of the gate
+gate.gate_size      # get the gate size
+gate.frame_step     # get the frame step
+gate.gate_limit     # get the maximum limit of the gate
+gate.frame_limit    # get the maximum limit of the frame
+gate.storage        # get the storage type
+gate.timezone       # get the gate timezone
+gate.frames         # get the number of frames
+gate.current_dt     # get the current frame datetime
+gate.current_frame  # get the current frame datetime and value
+gate.last_frame     # get the last frame datetime and value
+gate.limits         # get the gate and frame limits
+gate.sum            # get the sum of all values in the gate
+gate.data           # get the values of the gate
+gate.state          # get the sum and data of the gate atomically
+```
+
 ## Example
 
 To understand how it works, run this code in your favourite IDE:
@@ -284,7 +326,15 @@ only because Redis uses [Lua 5.1](https://www.lua.org/manual/5.1/).
 Lua 5.1 works with numbers as `double64` bit floating point numbers in 
 [IEEE 754](https://en.wikipedia.org/wiki/IEEE_754) standard. Starting from ``2**53`` Lua loses precision.  
 But for the purposes of this package even ``2**53 - 1`` is still big enough.
-
+- By default, the CallGate uses Redis `15` database. You can change it by passing the correspondent parameter to the
+`CallGate` constructor kwargs.  
+- The built-in Redis client decodes the Redis-server responses - it can not be changed.
+- If the timezone of your gate is important for any reason, it may be set using the `timezone` parameter 
+in the `CallGate` constructor in the string format: "UTC", "Europe/London", "America/New_York", etc. By default,
+it is `None`.
+- If you need to control the gate's `data` and `sum` between the `update` calls, it's better to use `state` 
+property instead of calling `sum` and `data`. Gate's `state` collects both values at once. And when you are calling 
+`sum` and `data` one-by-one, the frame time may pass and the values may be out of sync.
 
 ## Testing
 The code is covered with 1.5K test cases.

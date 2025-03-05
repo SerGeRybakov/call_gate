@@ -45,7 +45,12 @@ tox:
 	  echo "Update the Makefile with correct paths for these executables and try again."; \
 	  exit 1; \
 	else \
+	  deactivate; \
+	  conda deactivate; \
+	  docker compose down; \
+	  docker compose up -d; \
 	  tox -p; \
+	  source .venv/bin/activate; \
 	fi
 
 all: check tox coverage

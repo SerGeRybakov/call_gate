@@ -245,6 +245,18 @@ class TestCallGateInit:
             "2024-01-01T00:00:00.123+01:00",
             "2024-01-01 00:00:00Z",
             "2024-01-01-00:00:00Z",
+            pytest.param(
+                "20240101000000Z",
+                marks=pytest.mark.xfail(sys.version_info < (3, 11), reason="Behaviour changed in 3.11", strict=True),
+            ),
+            pytest.param(
+                "20240101 000000Z",
+                marks=pytest.mark.xfail(sys.version_info < (3, 11), reason="Behaviour changed in 3.11", strict=True),
+            ),
+            pytest.param(
+                "20240101-000000Z",
+                marks=pytest.mark.xfail(sys.version_info < (3, 11), reason="Behaviour changed in 3.11", strict=True),
+            ),
         ],
     )
     def test_init_timestamps(self, current_dt, storage):
