@@ -152,6 +152,31 @@ to the same Redis-server.
 
 Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
+If you are using a remote Redis-server, just pass the 
+[client parameters](https://redis-py.readthedocs.io/en/stable/connections.html) to the `CallGate` constructor `kwargs`:
+
+```python
+gate = CallGate(
+    "my_gate", 
+    timedelta(seconds=10), 
+    timedelta(seconds=1), 
+    storage=GateStorageType.redis,
+    host="10.0.0.1",
+    port=16379,
+    db=0,
+    password="secret",
+    ...
+) 
+```
+The default parameters are: 
+- `host`: `"localhost"`
+- `port`: `6379`, 
+- `db`: `15`, 
+- `password`: `None`.
+
+Also, be noted that the client decodes the Redis-server responses by default. It can not be changed - the 
+`decode_responses` parameter is ignored.
+
 ### Use Directly
 
 Actually, the only method you need is the ``update`` method:
@@ -326,9 +351,6 @@ only because Redis uses [Lua 5.1](https://www.lua.org/manual/5.1/).
 Lua 5.1 works with numbers as `double64` bit floating point numbers in 
 [IEEE 754](https://en.wikipedia.org/wiki/IEEE_754) standard. Starting from ``2**53`` Lua loses precision.  
 But for the purposes of this package even ``2**53 - 1`` is still big enough.
-- By default, the CallGate uses Redis `15` database. You can change it by passing the correspondent parameter to the
-`CallGate` constructor kwargs.  
-- The built-in Redis client decodes the Redis-server responses - it can not be changed.
 - If the timezone of your gate is important for any reason, it may be set using the `timezone` parameter 
 in the `CallGate` constructor in the string format: "UTC", "Europe/London", "America/New_York", etc. By default,
 it is `None`.
