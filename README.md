@@ -152,7 +152,7 @@ to the same Redis-server.
 
 Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
-### Use directly
+### Use Directly
 
 Actually, the only method you need is the ``update`` method:
 
