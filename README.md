@@ -6,10 +6,10 @@
 [![Mypy](https://img.shields.io/static/v1?label=mypy&message=passed&color=success)](https://github.com/SerGeRybakov/call_gate/actions?query=workflow%3A%22Type+Check%22)
 [![Pytest](https://img.shields.io/static/v1?label=pytest&message=passed&color=brightgreen)](https://github.com/SerGeRybakov/call_gate/actions?query=workflow%3A%22Test%22)
 [![Codecov](https://codecov.io/gh/SerGeRybakov/call_gate/graph/badge.svg?token=NM5VXTXF21)](https://codecov.io/gh/SerGeRybakov/call_gate)
-[![CI Status](https://img.shields.io/github/workflow/status/SerGeRybakov/call_gate/CI?style=flat-square)](https://github.com/SerGeRybakov/call_gate/actions)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/SerGeRybakov/call_gate/workflow.yml?branch=main&style=flat-square&label=CI)](https://github.com/SerGeRybakov/call_gate/actions)
 [![CI](https://github.com/SerGeRybakov/call_gate/actions/workflows/workflow.yml/badge.svg)](https://github.com/SerGeRybakov/call_gate/actions/workflows/workflow.yml)
 
-[![PyPI version](https://badge.fury.io/py/ansicolortags.svg)](https://pypi.python.org/pypi/ansicolortags/)
+[![PyPI version](https://img.shields.io/pypi/v/call_gate.svg)](https://pypi.org/project/call_gate/)
 [![License](https://img.shields.io/pypi/l/ansicolortags.svg)](https://pypi.python.org/pypi/ansicolortags/)
 [![Python Versions](https://img.shields.io/badge/Python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 
