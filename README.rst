@@ -50,7 +50,8 @@ CallGate - Awesome Rate Limiter
 Overview
 --------
 
-This project implements a sliding window time-bound rate limiter, which allows tracking events over a configurabletime window divided into equal frames. Each frame tracks increments and decrements within a specific time period
+This project implements a sliding window time-bound rate limiter, which allows tracking events over a configurable
+time window divided into equal frames. Each frame tracks increments and decrements within a specific time period
 defined by the frame step.
 
 The CallGate maintains only the values within the set bounds, automatically removing outdated frames as new
@@ -122,9 +123,9 @@ Using ``timedelta`` allows to set these parameters more precisely and flexible:
        frame_step=timedelta(milliseconds=1),
    )
 
-While timedelta allows you to set even microseconds, you shall a realist and remember that Python is not that fast.
+While timedelta allows you to set even microseconds, you shall be a realist and remember that Python is not that fast.
 Some operations may definitely take some microseconds but usually your code needs some milliseconds or longer
-to switch context, perform a loop, etc. You shall also take into consideration network latency if you use remote Redis
+to switch context, perform a loop, etc. You should also consider network latency if you use remote Redis
 or make calls to other remote services.
 
 Setting Limits
@@ -135,9 +136,8 @@ Basically, the gate has two limits:
 - ``gate_limit``: how many values can be in the whole gate
 - ``frame_limit``: granular limit for each frame in the gate.
 
-Both of them a set to zero by default. You can set any of them as follows:
-
-For example:
+Both are set to zero by default. You can keep them zero (what is useless) or reset any of them
+(or both of them) as follows:
 
 .. code-block:: python
 
@@ -150,18 +150,22 @@ For example:
    )
 
 What does it mean? This gate has a total scope of 1 second divided by 1 millisecond, what makes this gate rather large:
-1000 frames. And the defined limits tell us that in each millisecond we can perform no more than 2 actions.
-If the limit is exceeded, we will have to wait until we find ourselves in the next millisecond.
+1000 frames. And the defined limits tell us that within each millisecond we can perform no more than 2 actions.
+
+f the limit is exceeded, we will have to wait until the next millisecond.
 But the gate limit will reduce us to 600 total actions during 1 second.
+
 You can easily calculate, that during 1 second we shall consume the major limit in the first 300 milliseconds
-and the rest of the time our code be waiting until the total ``gate.sum`` is reduced.
+and the rest of the time our code will be waiting until the total ``gate.sum`` is reduced.
+
 It will be reduced frame-by-frame. Each time, when the sliding window slides by one frame, a sum is recalculated.
 Thus, we will do 600 calls more or less quickly and after it we'll start doing slowly and peacefully, frame-by-frame:
-2 calls per 1 millisecond.
+2 calls per 1 millisecond + waiting until the gate sum will be lower than 600.
 
-The best pattern is to follow the rate-limit documentation of the service which you are using.
+The best practice is to follow the rate-limit documentation of the service which you are using.
 
-For example, in 2025 Gmail API has the following rate-limits for mail **sending** via 1 account (mailbox):
+For example, at the edge of 2024-2025 Gmail API has the following rate-limits for mail **sending**
+via 1 account (mailbox):
 - 2 emails per second but no more than 1200 emails within last 10 minutes;
 - 2000 emails per day.
 
@@ -182,7 +186,7 @@ This leads us to the following:
        gate_limit=2000,
     )
 
-Both of these windows shall be used simultaneously in a sending script on each API call.
+Both of these windows should be used simultaneously in a sending script on each API call.
 
 Storage Options
 ~~~~~~~~~~~~~~~
@@ -210,9 +214,9 @@ The solution is ``redis`` storage, which is also thread-safe and process-safe as
 can easily use the same gate in multiple processes, even in separated Docker-containers connected to the same
 Redis-server.
 
-The coroutine-safety is provided for all of them by the main class: ``CallGate``.
+Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
-Updating
+Using
 ~~~~~~~~
 
 Actually, the only method you will need is the ``update`` method:
@@ -229,7 +233,7 @@ Actually, the only method you will need is the ``update`` method:
               throw=True  # throw an error if any limit is exceeded
           )
 
-Updating as a Decorator
+Using as a Decorator
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 You can also use the gate as a decorator for functions and coroutines:
@@ -244,7 +248,7 @@ You can also use the gate as a decorator for functions and coroutines:
     async def my_coroutine():
         # code here
 
-Updating as a Context Manager
+Using as a Context Manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 You can also use the gate as a context manager with functions and coroutines:
@@ -265,7 +269,7 @@ Asynchronous Usage
 
 As you could have already understood, ``CallGate`` can also be used asynchronously.
 
-There are 3 public methods that can be used vice-versa:
+There are 3 public methods that can be used interchangeably:
 
 .. code-block:: python
 
