@@ -102,7 +102,7 @@ class RedisStorage(BaseStorage):
         """Initialize the RedisStorage."""
         self.name = name
         self.capacity = capacity
-        # Сохраняем параметры подключения для последующего восстановления
+        # Save the connection parameters for subsequent restoration
         self._redis_kwargs = kwargs.copy()
         self._redis_kwargs.pop("manager", None)
         self._redis_kwargs.pop("decode_responses", None)
