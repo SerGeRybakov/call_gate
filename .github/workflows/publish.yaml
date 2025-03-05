@@ -7,13 +7,18 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write  # даёт права на запись в репозиторий
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false  # отключаем автоматические креденшиалы
+
+      - name: Configure Git remote with token
+        run: |
+          git remote set-url origin https://x-access-token:${{ secrets.PUSH_TOKEN }}@github.com/${{ github.repository }}.git
 
       - name: Checkout default branch
         run: |
