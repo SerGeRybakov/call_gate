@@ -32,7 +32,7 @@ from call_gate.errors import (
     GateOverflowError,
 )
 from call_gate.storages.base_storage import BaseStorage
-from call_gate.typings import CallGateState
+from call_gate.typings import State
 
 
 class SimpleStorage(BaseStorage):
@@ -90,12 +90,12 @@ class SimpleStorage(BaseStorage):
                 return self._sum
 
     @property
-    def state(self) -> CallGateState:
+    def state(self) -> State:
         """Get the current state of the storage."""
         with self._rlock:
             with self._lock:
                 lst = list(self._data)
-                return CallGateState(data=lst, sum=int(sum(lst)))
+                return State(data=lst, sum=int(sum(lst)))
 
     def slide(self, n: int) -> None:
         """Slide storage data to the right by n frames.

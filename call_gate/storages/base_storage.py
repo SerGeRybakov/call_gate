@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from typing_extensions import Unpack
 
-from call_gate.typings import CallGateState
+from call_gate.typings import State
 
 
 multiprocessing.set_start_method("spawn", force=True)
@@ -63,7 +63,7 @@ class BaseStorage(ABC):
 
     @property
     @abstractmethod
-    def state(self) -> CallGateState:
+    def state(self) -> State:
         """Get the current state of the storage."""
         pass
 

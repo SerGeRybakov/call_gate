@@ -18,7 +18,7 @@ from typing_extensions import Unpack
 
 from call_gate.errors import CallGateValueError, FrameLimitError, FrameOverflowError, GateLimitError, GateOverflowError
 from call_gate.storages.base_storage import BaseStorage
-from call_gate.typings import CallGateState
+from call_gate.typings import State
 
 
 if TYPE_CHECKING:
@@ -70,11 +70,11 @@ class SharedMemoryStorage(BaseStorage):
                 return deepcopy(self._sum.value)
 
     @property
-    def state(self) -> CallGateState:
+    def state(self) -> State:
         """Get the sum of all values in the storage."""
         with self._rlock:
             with self._lock:
-                return CallGateState(data=list(self._data), sum=int(self._sum.value))
+                return State(data=list(self._data), sum=int(self._sum.value))
 
     def close(self) -> None:
         """Close storage memory segment."""

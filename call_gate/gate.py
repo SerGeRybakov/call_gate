@@ -44,11 +44,11 @@ from call_gate.storages.shared import SharedMemoryStorage
 from call_gate.storages.simple import SimpleStorage
 from call_gate.typings import (
     CallGateLimits,
-    CallGateState,
     Frame,
     GateStorageModeType,
     GateStorageType,
     Sentinel,
+    State,
 )
 
 
@@ -566,7 +566,7 @@ class CallGate:
             return self._data.as_list()
 
     @property
-    def state(self) -> CallGateState:
+    def state(self) -> State:
         """Get the current state of the storage."""
         return self._data.state
 

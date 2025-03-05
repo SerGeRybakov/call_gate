@@ -34,7 +34,7 @@ class CallGateLimits(NamedTuple):
     frame_limit: int
 
 
-class CallGateState(NamedTuple):
+class State(NamedTuple):
     """Representation of a gate storage state.
 
     Properties:

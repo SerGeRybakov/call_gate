@@ -26,7 +26,7 @@ from typing_extensions import Unpack
 from call_gate import FrameLimitError, GateLimitError
 from call_gate.errors import CallGateValueError, FrameOverflowError, GateOverflowError
 from call_gate.storages.base_storage import BaseStorage
-from call_gate.typings import CallGateState
+from call_gate.typings import State
 
 
 class RedisReentrantLock:
@@ -253,7 +253,7 @@ class RedisStorage(BaseStorage):
                 return int(s) if s is not None else 0
 
     @property
-    def state(self) -> CallGateState:
+    def state(self) -> State:
         """Get the current state of the storage."""
         # fmt: off
         lua_script = """
@@ -281,7 +281,7 @@ class RedisStorage(BaseStorage):
         with self._rlock:
             with self._lock:
                 data, sum_ = self._client.eval(lua_script, 2, self._data, self._sum)
-                return CallGateState(data=data, sum=sum_)
+                return State(data=data, sum=sum_)
 
     def slide(self, n: int) -> None:
         """Slide the storage to the right by n frames.
