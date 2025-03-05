@@ -1,0 +1,255 @@
+[tool.poetry]
+name = "call-gate"
+version = "0.0.0"
+description = "CallGate - Awesome Rate Limiter for Python"
+authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
+readme = "README.md"
+license = "MIT"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Operating System :: Unix",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+[tool.poetry-dynamic-versioning]
+enabled = true
+vcs = "git"
+style = "semver"
+metadata = false
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.extras]
+redis = ["redis"]
+
+[tool.poetry.dependencies]
+python = ">=3.9 <4"
+typing-extensions = ">=4.12.2"
+redis = { version = ">=5.0.0", optional = true }
+
+[tool.poetry.group.dev.dependencies]
+python-dateutil = ">=2.9.0.post0"
+coverage = ">=7.1.0"
+ssort = ">=0.14.0"
+ruff = ">=0.9.7"
+mypy = ">=1.0.0"
+mypy-extensions = ">=1.0.0"
+pre-commit = ">=3.0.4"
+pytest = ">=7.2.0"
+pytest-asyncio = ">=0.25.3"
+pytest-cov = ">=4.0.0"
+pytest-sugar = ">=0.9.6"
+pytest-random-order = ">=1.1.0"
+pytest-retry = ">=1.7.0"
+deepdiff = ">=6.3.0"
+pytest-deadfixtures = ">=2.2.1"
+pytest-timeout = ">=2.3.1"
+bandit = ">=1.7.5"
+deptry = ">=0.6.4"
+redis = ">=5.0.0"
+faker = ">=19.0.0"
+
+
+[tool.poetry.group.docs.dependencies]
+docutils = ">=0.21"
+m2r2 = ">=0.3.2"
+sphinx-rtd-theme = ">=3"
+enum_tools = ">=0.12.0"
+sphinx_toolbox = ">=3.9.0"
+doc8 = ">=1.1.2"
+
+#############
+### TOOLS ###
+#############
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = [".idea", ".vscode", ".fleet"]
+src = ["call_gate"]
+
+# https://docs.astral.sh/ruff/settings/#lint
+[tool.ruff.lint]
+select = [
+  'ASYNC', # flake8-async
+  'B', # flake8-bugbear
+  'C90', # mccabe
+  'D', # pydocstyle
+  'E', # pycodestyle (errors)
+  'F', # flake8
+  'I', # isort
+  'N', # pep8-naming
+  'PL', # pylint
+  'PTH', # flake8-use-pathlib
+  'PT', # flake8-pytest-style
+  'Q', # flake8-quotes
+  'RUF', # ruff-specific rules
+  'S', # flake8-bandit
+  'TCH', # flake8-type-checking
+  'TID', # flake8-tidy-imports
+  'UP', # pyupgrade
+  'W', # pycodestyle (warnings)
+]
+
+ignore = [
+  "D105",  # missing docstring in __init__
+  "D107",  # missing docstring in __init__
+]
+
+# https://docs.astral.sh/ruff/settings/#extend-per-file-ignores
+[tool.ruff.lint.extend-per-file-ignores]
+"__init__.py" = [
+  "D104", # missing-module-docstring
+]
+
+"tests/**" = [
+  "D100",  # Missing docstring in public module
+  "D101",  # Missing docstring in public class
+  "D102",  # Missing docstring in public method
+  "D103",  # Missing docstring in public function
+  "PLR2004",  # Consider using 'with' for resource-allocating operations
+  "PT003",  # Missing docstring in public method
+  "PT011",  # Missing type annotation for function return value
+  "PT012",  # Missing type annotation for 'self' in method
+  "PTH123",  # Use 'os.path' instead of 'pathlib.Path'
+  "S101",  # Use of assert detected
+  "S311",  # Standard pseudo-random generators are not suitable for security/cryptographic purposes
+]
+
+# https://docs.astral.sh/ruff/settings/#lintpylint
+[tool.ruff.lint.pylint]
+max-args = 12
+
+# https://docs.astral.sh/ruff/settings/#lintflake8-tidy-imports
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# https://docs.astral.sh/ruff/settings/#lintpydocstyle
+[tool.ruff.lint.pydocstyle]
+convention = 'pep257'
+
+# https://docs.astral.sh/ruff/settings/#lintmccabe
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+# https://docs.astral.sh/ruff/settings/#lintisort
+[tool.ruff.lint.isort]
+section-order = [
+  'future',
+  'standard-library',
+  'third-party',
+  'first-party',
+  'local-folder',
+]
+known-first-party = ["call_gate"]
+lines-after-imports = 2
+lines-between-types = 1
+
+[tool.mypy]  # code linter
+# https://mypy.readthedocs.io/en/stable/
+# https://pypi.org/project/mypy-extensions/
+python_version = "3.9"
+ignore_missing_imports = true
+scripts_are_modules = true
+allow_redefinition = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_no_return = false
+show_error_context = true
+show_column_numbers = true
+show_error_codes = true
+color_output = false
+pretty = true
+exclude = [
+  '^setup\.py$',
+  '^tmp\.py$',
+  '^venv/',
+  '^.venv/',
+  '^test+\.py$',
+  '^conftest\.py$',
+  '^tmp/',
+]
+disable_error_code = "misc,no-redef,override,union-attr,index,assignment"
+
+[[tool.mypy.overrides]]
+module = "tests/*"
+disallow_untyped_defs = false
+
+
+[tool.doc8]  # RST linter
+# https://github.com/PyCQA/doc8
+max-line-length = 120
+
+[tool.bandit]  # security linter
+# https://github.com/PyCQA/bandit
+skips = ["B324"]
+
+#########
+# TESTS #
+#########
+
+[tool.pytest.ini_options]  # pytest
+# https://docs.pytest.org
+# https://pypi.org/project/pytest-asyncio/
+# https://pytest-cov.readthedocs.io/en/latest/
+# https://pypi.org/project/pytest-pythonpath/
+# https://pypi.org/project/pytest-sugar/
+minversion = 7.0
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+addopts = [
+  "--ignore=tmp.py",
+  "--random-order"
+]
+norecursedirs = "data"
+testpaths = "./tests"
+
+#log_cli = false
+#log_cli_level = "ERROR"
+show_capture = "no"
+
+pythonpath = ["./call_gate", "./.venv", "./venv"]
+filterwarnings = ["ignore::UserWarning", 'ignore::DeprecationWarning', "ignore::ResourceWarning"]
+
+[tool.coverage.run]  # coverage
+source = ["call_gate"]
+branch = true
+omit = [
+  "*/__init__.py",
+  "tests/*",
+  "tmp.py",
+  "call_gate/typings.py"
+]
+
+[tool.coverage.html]
+directory = "tests/code_coverage"
+
+[tool.coverage.report]
+fail_under = 97
+exclude_lines = [
+  "no cov",
+  "pragma: no cover",
+  "if typing.TYPE_CHECKING:",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+  "pass",
+  "raise NotImplementedError",
+  "except ImportError",
+  "except ModuleNotFoundError",
+  "except Exception"
+]

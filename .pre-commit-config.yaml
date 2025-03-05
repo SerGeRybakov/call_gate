@@ -1,0 +1,108 @@
+# https://pre-commit.com/
+
+default_stages: [ pre-commit, pre-push ]
+default_language_version:
+  python: python3.9
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0  # Possible releases: https://github.com/pre-commit/pre-commit-hooks/releases
+    hooks:
+      - id: no-commit-to-branch
+        always_run: true
+
+      - id: check-ast
+        always_run: true
+
+      - id: check-json
+        always_run: true
+
+      - id: pretty-format-json
+        always_run: true
+        args: [ --autofix, --indent=4 ]
+
+      - id: check-toml
+        always_run: true
+
+      - id: check-yaml
+        always_run: true
+        args: [ --unsafe ]
+
+      - id: check-xml
+        always_run: true
+
+      - id: end-of-file-fixer
+        always_run: true
+
+      - id: check-docstring-first
+        always_run: true
+
+      - id: trailing-whitespace
+        exclude: .md$
+        always_run: true
+
+      - id: check-added-large-files
+        always_run: true
+        args: [ --maxkb=100 ]
+
+      - id: detect-private-key
+        always_run: true
+
+      - id: detect-aws-credentials
+        always_run: false
+        args: [ --allow-missing-credentials ]
+
+  -   repo: https://github.com/asottile/pyupgrade
+      rev: v3.19.1  # Possible releases: https://github.com/asottile/pyupgrade/tags
+      hooks:
+      -   id: pyupgrade
+          args: [--py39-plus]
+
+  - repo: https://github.com/python-poetry/poetry
+    rev: 1.7.0
+    hooks:
+      - id: poetry-check
+      - id: poetry-lock
+
+  - repo: https://github.com/bwhmather/ssort
+    rev: 0.14.0
+    hooks:
+      - id: ssort
+        entry: ssort
+        always_run: false
+        stages:
+          - pre-commit
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.8
+    hooks:
+      # Run the linter.
+      - id: ruff
+        types_or: [ python, pyi ]
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format
+        types_or: [ python, pyi ]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0  # Possible releases: https://github.com/python/mypy/tags
+    hooks:
+      - id: mypy
+        name: mypy
+        files: ^call_gate/
+        always_run: false
+        args: [--config-file=pyproject.toml]
+        stages:
+          - pre-commit
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest
+        files: ^tests/
+        language: system
+        pass_filenames: false
+        always_run: false
+        stages:
+          - pre-push
