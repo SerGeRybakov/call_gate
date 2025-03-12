@@ -67,6 +67,8 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+          --protected-mode no
+
 
     steps:
       - name: Checkout repository
@@ -109,6 +111,7 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+          --protected-mode no
 
     steps:
       - name: Checkout repository

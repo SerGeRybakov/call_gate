@@ -41,6 +41,7 @@ redis = ["redis"]
 python = ">=3.9 <4"
 typing-extensions = ">=4.12.2"
 redis = { version = ">=5.0.0", optional = true }
+flask = "^3.1.0"
 
 [tool.poetry.group.dev.dependencies]
 python-dateutil = ">=2.9.0.post0"
@@ -63,6 +64,12 @@ bandit = ">=1.7.5"
 deptry = ">=0.6.4"
 redis = ">=5.0.0"
 faker = ">=19.0.0"
+uvicorn = ">=0.22.0"
+gunicorn = ">=21.2.0"
+hypercorn = ">=0.14.3"
+fastapi = ">=0.100.0"
+flask = "^3.1.0"
+httpx = ">=0.24.1"
 
 
 [tool.poetry.group.docs.dependencies]

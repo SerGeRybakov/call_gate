@@ -19,8 +19,6 @@ from typing_extensions import Unpack
 from call_gate.typings import State
 
 
-multiprocessing.set_start_method("spawn", force=True)
-
 # Global manager for the entire application
 _GLOBAL_MANAGER: Optional[SyncManager] = None
 
