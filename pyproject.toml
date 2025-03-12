@@ -23,6 +23,9 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
+homepage = "https://github.com/SerGeRybakov/call_gate"
+repository = "https://github.com/SerGeRybakov/call_gate"
+documentation = "https://github.com/SerGeRybakov/call_gate/blob/main/README.md"
 
 [tool.poetry-dynamic-versioning]
 enable = true
