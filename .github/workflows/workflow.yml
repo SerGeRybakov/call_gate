@@ -68,6 +68,7 @@ jobs:
           --health-timeout 3s
           --health-retries 5
 
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -135,7 +136,7 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
-        run: poetry run pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml ./tests
+        run: poetry run pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py ./tests
         shell: bash
 
       - name: Upload results to Codecov

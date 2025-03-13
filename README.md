@@ -380,6 +380,9 @@ if __name__ == "__main__":
 
 ## Remarkable Notes
 - The package is compatible with Python 3.9+.
+- Under `WSGI/ASGI applications` I mean the applications such as `gunicorn` or `uvicorn`. Unfortunately, 
+  `CallGate` can not be used with `hypercorn` as it spawns each worker as a daemon process, which do not allow 
+  child processes. There is a special test for this case: ["test_hepercorn_server_fails"](tests/test_asgi_wsgi.py#L40).   
 - All the updates are atomic, so no race conditions shall occur.
 - The majority of Redis calls is performed via 
 [Lua-scripts](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/), what makes them run 
