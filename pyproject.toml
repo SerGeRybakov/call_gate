@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "call-gate"
-version = "1.0.0"
+version = "1.0.1"
 description = "CallGate - Awesome Rate Limiter for Python"
 authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
 readme = "README.md"
@@ -44,6 +44,7 @@ redis = ["redis"]
 python = ">=3.9 <4"
 typing-extensions = ">=4.12.2"
 redis = { version = ">=5.0.0", optional = true }
+flask = "^3.1.0"
 
 [tool.poetry.group.dev.dependencies]
 python-dateutil = ">=2.9.0.post0"
