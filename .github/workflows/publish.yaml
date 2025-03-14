@@ -12,39 +12,18 @@ jobs:
       id-token: write
     environment:
       name: pypi
-      url: https://pypi.org/project/call_gate
+      url: https://pypi.org/p/call_gate
 
     steps:
-      - name: Checkout repository at release tag
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}       # Checkout именно по тегу релиза
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Configure Git remote with token
-        run: |
-          git remote set-url origin https://x-access-token:${{ secrets.PUSH_TOKEN }}@github.com/${{ github.repository }}.git
-
-      - name: Configure Git
-        run: |
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "GitHub Actions"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-
-      - name: Install Poetry
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry
 
       - name: Extract version from tag
         id: get_version
         run: |
-          # Извлекаем версию из тега (например, "v1.0.1" -> "1.0.1")
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "Extracted version: $VERSION"
@@ -56,37 +35,42 @@ jobs:
             exit 1
           fi
 
-      - name: Update version in pyproject.toml
+      - name: Check pyproject.toml version
         run: |
-          # Обновляем версию в pyproject.toml согласно тегу
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          git add pyproject.toml
-          if git diff-index --quiet HEAD; then
-            echo "No changes detected, skipping commit."
-          else
-            git commit -m "Update version to $VERSION in pyproject.toml"
-            git push origin HEAD:${{ github.event.repository.default_branch }}
+          PYPROJECT_VERSION=$(grep -oP '(?<=^version = ")[^"]+' pyproject.toml)
+          if [[ "$PYPROJECT_VERSION" != "$VERSION" ]]; then
+            echo "❌ Version mismatch: pyproject.toml has version $PYPROJECT_VERSION, but tag is $VERSION"
+            exit 1
           fi
+          echo "✅ Version check passed: pyproject.toml ($PYPROJECT_VERSION) matches tag ($VERSION)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
 
       - name: Install dependencies
         run: poetry install --no-interaction
 
       - name: Build sdist
         run: |
-          pip install poetry-dynamic-versioning
-          poetry dynamic-versioning enable
           poetry build -f sdist
 
-      - name: Verify sdist version matches tag without postfix
+      - name: Verify sdist version
         run: |
-          # Находим сгенерированный sdist в каталоге dist
-          sdist_file=$(find dist -name "*.tar.gz" | head -n 1)
-          echo "Found sdist file: $sdist_file"
-          # Проверяем, что имя файла заканчивается ровно на "-<VERSION>.tar.gz"
-          if [[ ! "$sdist_file" =~ -${VERSION}\.tar\.gz$ ]]; then
-            echo "❌ Version mismatch: sdist file $sdist_file does not exactly match version ${VERSION} (no postfix allowed)"
+          SDIST_FILE=$(ls dist/*.tar.gz | head -n 1)
+          SDIST_VERSION=$(echo "$SDIST_FILE" | grep -oP '(?<=-)[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)*)?(?=.tar.gz)')
+          
+          if [[ "$SDIST_VERSION" != "$VERSION" ]]; then
+            echo "❌ Version mismatch: sdist file $SDIST_FILE does not exactly match tag version $VERSION"
             exit 1
           fi
+          echo "✅ Version check passed: $SDIST_FILE"
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
