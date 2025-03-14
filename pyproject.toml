@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "call-gate"
-version = "1.0.1"
+version = "1.0.2"
 description = "CallGate - Awesome Rate Limiter for Python"
 authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
 readme = "README.md"
