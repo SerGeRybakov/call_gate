@@ -65,7 +65,7 @@ jobs:
             echo "No changes detected, skipping commit."
           else
             git commit -m "Update version to $VERSION in pyproject.toml"
-            git push
+            git push origin HEAD:${{ github.event.repository.default_branch }}
           fi
 
       - name: Install dependencies
