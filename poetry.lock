@@ -464,14 +464,14 @@ test = ["cssselect", "importlib-resources ; python_version < \"3.9\"", "jaraco.t
 
 [[package]]
 name = "deepdiff"
-version = "8.4.1"
+version = "8.4.2"
 description = "Deep Difference and Search of any Python object/data. Recreate objects by adding adding deltas to each other."
 optional = false
 python-versions = ">=3.8"
 groups = ["dev"]
 files = [
-    {file = "deepdiff-8.4.1-py3-none-any.whl", hash = "sha256:c853011336f3b6bc0f48f1ef564656f84a2cd78fbc8ee5da2033a3e017f52e79"},
-    {file = "deepdiff-8.4.1.tar.gz", hash = "sha256:b863d2552909160eccfeae2c9882bf1f75c69888499a04ca1597c706d12fe87f"},
+    {file = "deepdiff-8.4.2-py3-none-any.whl", hash = "sha256:7e39e5b26f3747c54f9d0e8b9b29daab670c3100166b77cc0185d5793121b099"},
+    {file = "deepdiff-8.4.2.tar.gz", hash = "sha256:5c741c0867ebc7fcb83950ad5ed958369c17f424e14dee32a11c56073f4ee92a"},
 ]
 
 [package.dependencies]
