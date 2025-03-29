@@ -111,8 +111,8 @@ class RedisStorage(BaseStorage):
             self._redis_kwargs["db"] = 15
 
         self._client: Redis = Redis(**self._redis_kwargs)
-        self._data: str = self.name  # Redis key для списка
-        self._sum: str = f"{self.name}:sum"  # Redis key для суммы
+        self._data: str = self.name  # Redis key for the list
+        self._sum: str = f"{self.name}:sum"  # Redis key for the sum
         self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
         self._rlock = RedisReentrantLock(self._client, self.name)
 
@@ -390,7 +390,7 @@ class RedisStorage(BaseStorage):
         :return: The integer value at the specified index.
         """
         with self._rlock:
-            with self._rlock:
+            with self._lock:
                 val: str = self._client.lindex(self._data, index)
                 return int(val) if val is not None else 0
 
