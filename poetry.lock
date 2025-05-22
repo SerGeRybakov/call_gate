@@ -595,14 +595,14 @@ dates = ["pytz (>=2019.1)"]
 
 [[package]]
 name = "enum-tools"
-version = "0.12.0"
+version = "0.13.0"
 description = "Tools to expand Python's enum module."
 optional = false
 python-versions = ">=3.6"
 groups = ["docs"]
 files = [
-    {file = "enum_tools-0.12.0-py3-none-any.whl", hash = "sha256:d69b019f193c7b850b17d9ce18440db7ed62381571409af80ccc08c5218b340a"},
-    {file = "enum_tools-0.12.0.tar.gz", hash = "sha256:13ceb9376a4c5f574a1e7c5f9c8eb7f3d3fbfbb361cc18a738df1a58dfefd460"},
+    {file = "enum_tools-0.13.0-py3-none-any.whl", hash = "sha256:e0112b16767dd08cb94105844b52770eae67ece6f026916a06db4a3d330d2a95"},
+    {file = "enum_tools-0.13.0.tar.gz", hash = "sha256:0d13335e361d300dc0f8fd82c8cf9951417246f9676144f5ee1761eb690228eb"},
 ]
 
 [package.dependencies]
@@ -730,14 +730,14 @@ tornado = ["tornado (>=0.2)"]
 
 [[package]]
 name = "h11"
-version = "0.14.0"
+version = "0.16.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
 optional = false
 python-versions = ">=3.7"
 groups = ["dev"]
 files = [
-    {file = "h11-0.14.0-py3-none-any.whl", hash = "sha256:e3fe4ac4b851c468cc8363d500db52c2ead036020723024a109d37346efaa761"},
-    {file = "h11-0.14.0.tar.gz", hash = "sha256:8f19fbbe99e72420ff35c00b27a34cb9937e902a8b810e2c88300c6f0a3b699d"},
+    {file = "h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"},
+    {file = "h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1"},
 ]
 
 [[package]]
@@ -792,19 +792,19 @@ lxml = ["lxml ; platform_python_implementation == \"CPython\""]
 
 [[package]]
 name = "httpcore"
-version = "1.0.7"
+version = "1.0.9"
 description = "A minimal low-level HTTP client."
 optional = false
 python-versions = ">=3.8"
 groups = ["dev"]
 files = [
-    {file = "httpcore-1.0.7-py3-none-any.whl", hash = "sha256:a3fff8f43dc260d5bd363d9f9cf1830fa3a458b332856f34282de498ed420edd"},
-    {file = "httpcore-1.0.7.tar.gz", hash = "sha256:8551cb62a169ec7162ac7be8d4817d561f60e08eaa485234898414bb5a8a0b4c"},
+    {file = "httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55"},
+    {file = "httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8"},
 ]
 
 [package.dependencies]
 certifi = "*"
-h11 = ">=0.13,<0.15"
+h11 = ">=0.16"
 
 [package.extras]
 asyncio = ["anyio (>=4.0,<5.0)"]
@@ -1611,14 +1611,14 @@ testing = ["coverage (>=6.2)", "hypothesis (>=5.7.1)"]
 
 [[package]]
 name = "pytest-cov"
-version = "6.0.0"
+version = "6.1.1"
 description = "Pytest plugin for measuring coverage."
 optional = false
 python-versions = ">=3.9"
 groups = ["dev"]
 files = [
-    {file = "pytest-cov-6.0.0.tar.gz", hash = "sha256:fde0b595ca248bb8e2d76f020b465f3b107c9632e6a1d1705f17834c89dcadc0"},
-    {file = "pytest_cov-6.0.0-py3-none-any.whl", hash = "sha256:eee6f1b9e61008bd34975a4d5bab25801eb31898b032dd55addc93e96fcaaa35"},
+    {file = "pytest_cov-6.1.1-py3-none-any.whl", hash = "sha256:bddf29ed2d0ab6f4df17b4c55b0a657287db8684af9c42ea546b21b1041b3dde"},
+    {file = "pytest_cov-6.1.1.tar.gz", hash = "sha256:46935f7aaefba760e716c2ebfbe1c216240b9592966e7da99ea8292d4d3e2a0a"},
 ]
 
 [package.dependencies]
@@ -2561,14 +2561,14 @@ zstd = ["zstandard (>=0.18.0)"]
 
 [[package]]
 name = "uvicorn"
-version = "0.34.0"
+version = "0.34.2"
 description = "The lightning-fast ASGI server."
 optional = false
 python-versions = ">=3.9"
 groups = ["dev"]
 files = [
-    {file = "uvicorn-0.34.0-py3-none-any.whl", hash = "sha256:023dc038422502fa28a09c7a30bf2b6991512da7dcdb8fd35fe57cfc154126f4"},
-    {file = "uvicorn-0.34.0.tar.gz", hash = "sha256:404051050cd7e905de2c9a7e61790943440b3416f49cb409f965d9dcd0fa73e9"},
+    {file = "uvicorn-0.34.2-py3-none-any.whl", hash = "sha256:deb49af569084536d269fe0a6d67e3754f104cf03aba7c11c40f01aadf33c403"},
+    {file = "uvicorn-0.34.2.tar.gz", hash = "sha256:0e929828f6186353a80b58ea719861d2629d766293b6d19baf086ba31d4f3328"},
 ]
 
 [package.dependencies]
