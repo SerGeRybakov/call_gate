@@ -598,7 +598,7 @@ name = "enum-tools"
 version = "0.13.0"
 description = "Tools to expand Python's enum module."
 optional = false
-python-versions = ">=3.6"
+python-versions = ">=3.7"
 groups = ["docs"]
 files = [
     {file = "enum_tools-0.13.0-py3-none-any.whl", hash = "sha256:e0112b16767dd08cb94105844b52770eae67ece6f026916a06db4a3d330d2a95"},
@@ -733,7 +733,7 @@ name = "h11"
 version = "0.16.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
 optional = false
-python-versions = ">=3.7"
+python-versions = ">=3.8"
 groups = ["dev"]
 files = [
     {file = "h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"},
@@ -2504,14 +2504,14 @@ setuptools = "*"
 
 [[package]]
 name = "typing-extensions"
-version = "4.13.0"
-description = "Backported and Experimental Type Hints for Python 3.8+"
+version = "4.14.1"
+description = "Backported and Experimental Type Hints for Python 3.9+"
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.9"
 groups = ["main", "dev", "docs"]
 files = [
-    {file = "typing_extensions-4.13.0-py3-none-any.whl", hash = "sha256:c8dd92cc0d6425a97c18fbb9d1954e5ff92c1ca881a309c45f06ebc0b79058e5"},
-    {file = "typing_extensions-4.13.0.tar.gz", hash = "sha256:0a4ac55a5820789d87e297727d229866c9650f6521b64206413c4fbada24d95b"},
+    {file = "typing_extensions-4.14.1-py3-none-any.whl", hash = "sha256:d1e1e3b58374dc93031d6eda2420a48ea44a36c2b4766a4fdeb3710755731d76"},
+    {file = "typing_extensions-4.14.1.tar.gz", hash = "sha256:38b39f4aeeab64884ce9f74c94263ef78f3c22467c8724005483154c26648d36"},
 ]
 
 [[package]]
