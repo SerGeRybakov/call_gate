@@ -1,4 +1,5 @@
 services:
+  # Single Redis instance for backward compatibility
   redis:
     image: redis:latest
     command: ["redis-server", "--bind", "0.0.0.0", "--port", "6379"]
@@ -10,3 +11,78 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # Redis pseudo-cluster nodes for cluster testing
+  redis-cluster-node-1:
+    image: redis:latest
+    command: [
+      "redis-server",
+      "--bind", "0.0.0.0",
+      "--port", "7001",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "nodes-7001.conf",
+      "--cluster-node-timeout", "5000",
+      "--appendonly", "yes"
+    ]
+    ports:
+      - 7001:7001
+    restart: 'no'
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-cluster-node-2:
+    image: redis:latest
+    command: [
+      "redis-server",
+      "--bind", "0.0.0.0",
+      "--port", "7002",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "nodes-7002.conf",
+      "--cluster-node-timeout", "5000",
+      "--appendonly", "yes"
+    ]
+    ports:
+      - 7002:7002
+    restart: 'no'
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-cluster-node-3:
+    image: redis:latest
+    command: [
+      "redis-server",
+      "--bind", "0.0.0.0",
+      "--port", "7003",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "nodes-7003.conf",
+      "--cluster-node-timeout", "5000",
+      "--appendonly", "yes"
+    ]
+    ports:
+      - 7003:7003
+    restart: 'no'
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7003", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Redis cluster initialization service
+  redis-cluster-init:
+    image: redis:latest
+    depends_on:
+      - redis-cluster-node-1
+      - redis-cluster-node-2
+      - redis-cluster-node-3
+    command: >
+      sh -c "
+        sleep 10 &&
+        redis-cli --cluster create redis-cluster-node-1:7001 redis-cluster-node-2:7002 redis-cluster-node-3:7003 --cluster-replicas 0 --cluster-yes
+      "
+    restart: 'no'
