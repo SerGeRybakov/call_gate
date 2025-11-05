@@ -55,8 +55,11 @@ if TYPE_CHECKING:
 
 try:
     import redis
+
+    from call_gate.storages.redis import RedisStorage
 except ImportError:
     redis = Sentinel
+    RedisStorage = Sentinel
 
 
 class CallGate:
@@ -231,8 +234,6 @@ class CallGate:
                     "Package `redis` (`redis-py`) is not installed. Please, install it manually to use Redis storage "
                     "or set storage to `simple' or `shared`."
                 )
-            from call_gate.storages.redis import RedisStorage
-
             storage_type = RedisStorage
 
         else:  # no cov

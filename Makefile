@@ -2,12 +2,37 @@
 
 SHELL := /bin/bash
 
+# Function to find the latest Python version for a given major.minor version
+define find_python_version
+$(shell \
+	for search_dir in /usr/bin /usr/local/bin $$HOME/.asdf/installs/python/*/bin $$HOME/.pyenv/versions/*/bin /opt/python/*/bin; do \
+		if [ -d "$$search_dir" ]; then \
+			find "$$search_dir" -name "python$(1)*" -executable 2>/dev/null; \
+		fi; \
+	done | \
+	grep -v -E "(venv|\.venv|config|gdb)" | \
+	while read path; do \
+		if [ -x "$$path" ]; then \
+			version=$$("$$path" -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>/dev/null); \
+			if [ "$$?" -eq 0 ] && echo "$$version" | grep -q "^$(1)\."; then \
+				echo "$$version $$path"; \
+			fi; \
+		fi; \
+	done | \
+	sort -V | \
+	tail -1 | \
+	cut -d' ' -f2 \
+)
+endef
+
+# Automatically detect Python versions 3.9-3.14
 PYTHON_PATHS := \
-	TOX_PY39_BASE=$(HOME)/.asdf/installs/python/3.9.21/bin/python \
-	TOX_PY310_BASE=$(HOME)/.asdf/installs/python/3.10.16/bin/python \
-	TOX_PY311_BASE=$(HOME)/.asdf/installs/python/3.11.11/bin/python \
-	TOX_PY312_BASE=$(HOME)/.asdf/installs/python/3.12.9/bin/python \
-	TOX_PY313_BASE=$(HOME)/.asdf/installs/python/3.13.2/bin/python
+	TOX_PY39_BASE=$(call find_python_version,3.9) \
+	TOX_PY310_BASE=$(call find_python_version,3.10) \
+	TOX_PY311_BASE=$(call find_python_version,3.11) \
+	TOX_PY312_BASE=$(call find_python_version,3.12) \
+	TOX_PY313_BASE=$(call find_python_version,3.13) \
+	TOX_PY314_BASE=$(call find_python_version,3.14)
 
 check:
 	-@source .venv/bin/activate
@@ -20,7 +45,7 @@ check:
 	@ruff check ./call_gate --fix
 	@ruff check ./tests --fix
 	@echo "======= MYPY ======="
-	@mypy ./call_gate --install-types
+	@mypy ./call_gate --install-types --non-interactive
 
 coverage:
 	-@source .venv/bin/activate
@@ -34,9 +59,9 @@ tox:
 	for pair in $(PYTHON_PATHS); do \
 	  var=$${pair%%=*}; \
 	  path=$${pair#*=}; \
-	  if [ ! -x "$$path" ]; then \
+	  if [ -n "$$path" ] && [ ! -x "$$path" ]; then \
 	    missing="$$missing\n$$path"; \
-	  else \
+	  elif [ -n "$$path" ]; then \
 	    export $$var="$$path"; \
 	  fi; \
 	done; \
@@ -45,8 +70,8 @@ tox:
 	  echo "Update the Makefile with correct paths for these executables and try again."; \
 	  exit 1; \
 	else \
-	  deactivate; \
-	  conda deactivate; \
+	  deactivate 2>/dev/null || true; \
+	  conda deactivate 2>/dev/null || true; \
 	  docker compose down; \
 	  docker compose up -d; \
 	  tox -p; \
