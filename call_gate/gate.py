@@ -42,6 +42,7 @@ from call_gate.typings import (
     Frame,
     GateStorageModeType,
     GateStorageType,
+    RedisConfigType,
     Sentinel,
     State,
 )
@@ -96,11 +97,15 @@ class CallGate:
 
         - ``GateStorageType.redis`` (requires ``redis`` (``redis-py``) - stores data in Redis,
           what provides a distributed storage between multiple processes, servers and Docker containers.
+          Supports both single Redis instances and Redis clusters.
 
     CallGate constructor accepts ``**kwargs`` for ``GateStorageType.redis`` storage. The parameters described
     at https://redis.readthedocs.io/en/latest/connections.html for ``redis.Redis`` object can be passed
     as keyword arguments. Redis URL is not supported. If not provided, the gate will use the default
     connection parameters, except the ``db``, which is set to ``15``.
+
+    For better type safety and IDE support, use the ``redis_config`` parameter with typed configuration
+    classes (``RedisConfig`` for single Redis, ``RedisClusterConfig`` for Redis cluster).
 
     :param name: gate name
     :param gate_size: The total size of the gate (as a timedelta or number of seconds).
@@ -109,6 +114,10 @@ class CallGate:
     :param frame_limit: Maximum allowed value per frame in the gate, default is ``0`` (no limit).
     :param timezone: Timezone name ("UTC", "Europe/Rome") for handling frames timestamp, default is ``None``.
     :param storage: Type of data storage: one of GateStorageType keys, default is ``GateStorageType.simple``.
+    :param redis_config: Typed Redis configuration (RedisConfig, RedisClusterConfig, or dict).
+                        Used only when storage is ``GateStorageType.redis``. Provides better type safety
+                        and IDE support compared to **kwargs. If provided, takes precedence over **kwargs
+                        for Redis connection parameters.
     :param kwargs: Special parameters for storage.
     """
 
@@ -195,6 +204,7 @@ class CallGate:
         frame_limit: int = 0,
         timezone: str = Sentinel,
         storage: GateStorageModeType = GateStorageType.simple,
+        redis_config: Optional[RedisConfigType] = None,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
         **kwargs: dict[str, Any],
@@ -244,8 +254,14 @@ class CallGate:
         if _data:
             self._validate_data(_data)
             kw.update({"data": _data})
+
         if kwargs:  # no cov
             kw.update(**kwargs)  # type: ignore[call-overload]
+
+        # Add redis_config for Redis storage if provided
+        if storage == GateStorageType.redis and redis_config is not None:
+            kw["redis_config"] = redis_config  # type: ignore[assignment]
+
         self._data: BaseStorage = storage_type(name, self._frames, manager=manager, **kw)  # type: ignore[arg-type]
 
         # Initialize _current_dt: validate provided value first, then try to restore from storage
