@@ -111,6 +111,12 @@ class RedisStorage(BaseStorage):
         if "db" not in self._redis_kwargs:
             self._redis_kwargs["db"] = 15
 
+        # Add socket timeouts to prevent hanging on Redis operations
+        if "socket_timeout" not in self._redis_kwargs:
+            self._redis_kwargs["socket_timeout"] = 5.0
+        if "socket_connect_timeout" not in self._redis_kwargs:
+            self._redis_kwargs["socket_connect_timeout"] = 5.0
+
         self._client: Redis = Redis(**self._redis_kwargs)
         self._data: str = self.name  # Redis key for the list
         self._sum: str = f"{self.name}:sum"  # Redis key for the sum
@@ -469,6 +475,12 @@ class RedisStorage(BaseStorage):
         Restores the Redis connection and recreates the locks.
         """
         self.__dict__.update(state)
+
+        # Add socket timeouts to prevent hanging on Redis operations
+        if "socket_timeout" not in self._redis_kwargs:
+            self._redis_kwargs["socket_timeout"] = 5.0
+        if "socket_connect_timeout" not in self._redis_kwargs:
+            self._redis_kwargs["socket_connect_timeout"] = 5.0
 
         self._client = Redis(**self._redis_kwargs)
         # Ensure timestamp key is set if it wasn't in the serialized state

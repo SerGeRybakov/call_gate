@@ -1,3 +1,4 @@
+import socket
 import subprocess
 import time
 
@@ -31,14 +32,18 @@ def terminate_process(proc: subprocess.Popen, timeout: float = 5.0) -> None:
     except subprocess.TimeoutExpired:
         # Force kill if terminate didn't work
         proc.kill()
-        proc.wait()  # Wait for kill to complete
+        try:
+            proc.wait(timeout=timeout)  # Wait for kill to complete with timeout
+        except subprocess.TimeoutExpired:
+            # If even kill didn't work, give up to prevent hanging
+            pass
 
 
 class TestASGIUvicorn:
     @pytest.fixture(scope="function")
     def uvicorn_server(self):
         proc = subprocess.Popen(
-            ["uvicorn", "tests.asgi_wsgi.asgi_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]  # noqa: S104
+            ["uvicorn", "tests.asgi_wsgi.asgi_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
         )
         time.sleep(2)  # give the server time to start
         yield
@@ -148,7 +153,25 @@ class TestASGIHypercorn:
         )
         proc.stdin.write("daemon = false\n")
         proc.stdin.close()
-        time.sleep(2)  # give the server time to start
+
+        # Wait for server to start with retries
+        max_retries = 20
+        for _ in range(max_retries):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.5)
+                result = sock.connect_ex(("0.0.0.0", 8001))
+                sock.close()
+                if result == 0:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
+        else:
+            # Server didn't start, terminate and fail
+            terminate_process(proc)
+            pytest.fail("Hypercorn server failed to start")
+
         yield
         terminate_process(proc)
 

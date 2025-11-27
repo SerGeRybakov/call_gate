@@ -140,9 +140,11 @@ ignore = [
   "PT012",  # Missing type annotation for 'self' in method
   "PTH123",  # Use 'os.path' instead of 'pathlib.Path'
   "S101",  # Use of assert detected
+  "S104",  # Hardcoded bind to all interfaces (0.0.0.0) - acceptable in tests
+  "S110",  # Try-except-pass - acceptable for error handling
   "S311",  # Standard pseudo-random generators are not suitable for security/cryptographic purposes
-  "S603",
-  "S607"
+  "S603",  # Subprocess call without shell=True - acceptable for explicit command execution
+  "S607",  # Starting process with partial path - acceptable when using system PATH
 ]
 
 # https://docs.astral.sh/ruff/settings/#lintpylint
