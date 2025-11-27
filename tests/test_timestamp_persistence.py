@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from call_gate import CallGate, GateStorageType
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -173,7 +173,7 @@ class TestTimestampPersistence:
         try:
             # Try to create a Redis gate to test if Redis is available
             gate_name = random_name()
-            gate = CallGate(gate_name, 60, 1, storage="redis")
+            gate = create_call_gate(gate_name, 60, 1, storage="redis")
         except Exception:
             pytest.skip("Redis not available")
 

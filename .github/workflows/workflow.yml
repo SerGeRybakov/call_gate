@@ -56,12 +56,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        include:
+          - python-version: '3.9'
+            redis-port: 6379
+          - python-version: '3.10'
+            redis-port: 6380
+          - python-version: '3.11'
+            redis-port: 6381
+          - python-version: '3.12'
+            redis-port: 6382
+          - python-version: '3.13'
+            redis-port: 6383
     services:
       redis:
         image: redis:latest
         ports:
-          - 6379:6379
+          - ${{ matrix.redis-port }}:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -93,7 +103,7 @@ jobs:
         timeout-minutes: 30
         env:
           REDIS_HOST: localhost
-          REDIS_PORT: 6379
+          REDIS_PORT: ${{ matrix.redis-port }}
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
         run: poetry run pytest
         shell: bash

@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import dateutil
 import pytest
 
-from call_gate import CallGate
+from call_gate import CallGate, GateStorageType
 from call_gate.errors import (
     CallGateValueError,
     FrameLimitError,
@@ -17,7 +17,7 @@ from call_gate.errors import (
     GateLimitError,
     GateOverflowError,
 )
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -45,7 +45,7 @@ class TestCallGateInit:
         ],
     )
     def test_init_success(self, gate_size, frame_step, storage):
-        gate = CallGate(random_name(), gate_size, frame_step, storage=storage)
+        gate = create_call_gate(random_name(), gate_size, frame_step, storage=storage)
         assert gate is not None
         if not isinstance(gate_size, timedelta):
             gate_size = timedelta(seconds=gate_size)
@@ -62,7 +62,7 @@ class TestCallGateInit:
             assert not gate.current_dt
             assert gate.timezone is None
 
-            gate_dict = {
+            expected_dict = {
                 "name": gate.name,
                 "gate_size": gate_size.total_seconds(),
                 "frame_step": frame_step.total_seconds(),
@@ -73,12 +73,28 @@ class TestCallGateInit:
                 "_data": [0] * gate.frames,
                 "_current_dt": None,
             }
-            assert gate.as_dict() == gate_dict
-            d = gate_dict.copy()
-            d.pop("_data")
-            d.pop("_current_dt")
-            gate_repr = f"CallGate({', '.join(f'{k}={v}' for k, v in d.items())})"
-            assert gate_repr == repr(gate)
+
+            # Get actual dict and check that all expected keys are present with correct values
+            actual_dict = gate.as_dict()
+            for key, expected_value in expected_dict.items():
+                assert key in actual_dict, f"Missing key: {key}"
+                assert actual_dict[key] == expected_value, (
+                    f"Key {key}: expected {expected_value}, got {actual_dict[key]}"
+                )
+            # Test repr() - for Redis storage, skip exact repr check due to additional parameters
+            if storage not in ("redis", GateStorageType.redis):
+                repr_dict = expected_dict.copy()
+                repr_dict.pop("_data")
+                repr_dict.pop("_current_dt")
+                gate_repr = f"CallGate({', '.join(f'{k}={v}' for k, v in repr_dict.items())})"
+                assert gate_repr == repr(gate)
+            else:
+                # For Redis, just check that repr() contains the basic expected fields
+                gate_repr = repr(gate)
+                assert gate.name in gate_repr
+                assert str(gate_size.total_seconds()) in gate_repr
+                assert str(frame_step.total_seconds()) in gate_repr
+                assert "storage=redis" in gate_repr or "storage=<GateStorageType.redis: 3>" in gate_repr
             gate_str = str(gate.state)
             assert gate_str == str(gate)
             assert gate.current_frame.value == 0
@@ -99,7 +115,7 @@ class TestCallGateInit:
     )
     def test_init_fails_gate_size_and_or_granularity(self, gate_size, frame_step, storage):
         with pytest.raises(ValueError):
-            assert CallGate(random_name(), gate_size, frame_step, storage=storage)
+            assert create_call_gate(random_name(), gate_size, frame_step, storage=storage)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -162,7 +178,7 @@ class TestCallGateInit:
     @pytest.mark.parametrize("storage", ["a", 0, {"simple"}, ["redis"], ("shared",), "sipmle", "redsi", "shered"])
     def test_init_fails_on_storage_value(self, storage):
         with pytest.raises(ValueError):
-            CallGate(random_name(), 10, 5, storage=storage)
+            create_call_gate(random_name(), 10, 5, storage=storage)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(

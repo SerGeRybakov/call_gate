@@ -6,7 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 import pytest
 
 from call_gate import CallGate, GateStorageType
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, start_methods, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, start_methods, storages
 
 
 def get_test_params() -> list[tuple[int, int, int]]:
@@ -63,7 +63,7 @@ class TestCallGateMultiprocessing:
     ):
         # Set the process start method
         multiprocessing.set_start_method(start_method, force=True)
-        gate = CallGate(random_name(), gate_size=60, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         processes = []
         for _ in range(num_processes):
             p = multiprocessing.Process(target=process_worker, args=(gate, num_updates, update_value))
@@ -90,7 +90,7 @@ class TestCallGateMultiprocessing:
         self, start_method: str, num_processes: int, iterations: int, update_value: int, storage: str
     ):
         multiprocessing.set_start_method(start_method, force=True)
-        gate = CallGate(random_name(), gate_size=60, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         processes = []
         for _ in range(num_processes):
             p = multiprocessing.Process(target=worker_context, args=(gate, iterations, update_value))
@@ -117,7 +117,7 @@ class TestCallGateMultiprocessing:
         self, start_method: str, num_processes: int, iterations: int, update_value: int, storage: str
     ):
         multiprocessing.set_start_method(start_method, force=True)
-        gate = CallGate(random_name(), gate_size=60, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         processes = []
         for _ in range(num_processes):
             p = multiprocessing.Process(target=worker_decorator, args=(gate, iterations, update_value))
@@ -146,7 +146,7 @@ class TestCallGateMultiprocessingExecutor:
     def test_process_pool_executor_updates(
         self, num_workers: int, num_updates: int, update_value: int, storage: str, start_method: str
     ):
-        gate = CallGate(random_name(), gate_size=60, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         multiprocessing.set_start_method(start_method, force=True)
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = [executor.submit(process_worker, gate, num_updates, update_value) for _ in range(num_workers)]
@@ -170,7 +170,7 @@ class TestCallGateMultiprocessingExecutor:
     def test_process_pool_executor_context(
         self, num_workers: int, num_updates: int, update_value: int, storage: str, start_method: str
     ):
-        gate = CallGate(random_name(), gate_size=60, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         multiprocessing.set_start_method(start_method, force=True)
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = [executor.submit(worker_context, gate, num_updates, update_value) for _ in range(num_workers)]
@@ -194,7 +194,7 @@ class TestCallGateMultiprocessingExecutor:
     def test_process_pool_executor_decorator(
         self, num_workers: int, num_updates: int, update_value: int, storage: str, start_method: str
     ):
-        gate = CallGate(random_name(), gate_size=60, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         multiprocessing.set_start_method(start_method, force=True)
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = [executor.submit(worker_decorator, gate, num_updates, update_value) for _ in range(num_workers)]

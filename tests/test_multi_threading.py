@@ -2,11 +2,15 @@ import os
 import threading
 
 from concurrent.futures.thread import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 import pytest
 
-from call_gate import CallGate
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
+
+
+if TYPE_CHECKING:
+    from call_gate import CallGate
 
 
 def get_test_params() -> list[tuple[int, int, int]]:
@@ -35,7 +39,7 @@ class TestCallGateInThreadsManual:
         get_test_params(),
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def worker():
             for _ in range(updates_per_thread):
@@ -60,7 +64,7 @@ class TestCallGateInThreadsManual:
         get_test_params(),
     )
     def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         @gate(update_value)
         def dummy_function():
@@ -89,7 +93,7 @@ class TestCallGateInThreadsManual:
         get_test_params(),
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def dummy_function(gate: "CallGate", update_value):
             # Any function that returns a result
@@ -121,7 +125,7 @@ class TestCallGateInThreadsExecutor:
         get_test_params(),
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def worker(*args, **kwargs):
             for _ in range(updates_per_thread):
@@ -143,7 +147,7 @@ class TestCallGateInThreadsExecutor:
         get_test_params(),
     )
     def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         @gate(update_value)
         def dummy_function():
@@ -169,7 +173,7 @@ class TestCallGateInThreadsExecutor:
         get_test_params(),
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = CallGate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
 
         def dummy_function(gate: "CallGate", update_value):
             # Any function that returns a result

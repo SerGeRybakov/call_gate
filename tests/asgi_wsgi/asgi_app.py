@@ -3,10 +3,11 @@ from datetime import timedelta
 
 from fastapi import FastAPI, HTTPException
 
-from call_gate import CallGate, GateStorageType
+from call_gate import GateStorageType
+from tests.parameters import create_call_gate
 
 
-gate = CallGate(
+gate = create_call_gate(
     "api_gate",
     timedelta(seconds=2),
     timedelta(milliseconds=100),
