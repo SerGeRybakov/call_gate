@@ -1,6 +1,8 @@
-import socket
+import os
 import subprocess
 import time
+
+from typing import Callable
 
 import httpx
 import pytest
@@ -12,6 +14,72 @@ try:
     HYPERCORN_VERSION = tuple(map(int, version("hypercorn").split(".")))
 except (ImportError, Exception):
     HYPERCORN_VERSION = (0, 0, 0)
+
+
+def wait_for_server(url: str, timeout: int = 30, github_actions: bool = False) -> bool:
+    """Wait for server to be ready with HTTP health check.
+
+    Args:
+        url: Server URL to check
+        timeout: Base timeout in seconds
+        github_actions: Whether running in GitHub Actions (uses longer timeout)
+
+    Returns:
+        True if server is ready, False if timeout
+    """
+    max_timeout = timeout * 2 if github_actions else timeout
+    start_time = time.time()
+    backoff = 0.1
+
+    while time.time() - start_time < max_timeout:
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                response = client.get(url)
+                if response.status_code in (200, 404):  # Server responding
+                    return True
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
+            pass
+
+        time.sleep(backoff)
+        backoff = min(backoff * 1.5, 2.0)  # Exponential backoff, max 2s
+
+    return False
+
+
+def retry_request(func: Callable, max_retries: int = 3, backoff: float = 0.5) -> Callable:
+    """Retry HTTP requests with exponential backoff.
+
+    Args:
+        func: Function to retry
+        max_retries: Maximum number of retry attempts
+        backoff: Initial backoff time in seconds
+
+    Returns:
+        Wrapped function with retry logic
+    """
+
+    def wrapper(*args, **kwargs):
+        last_exception = None
+        current_backoff = backoff
+
+        for attempt in range(max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except (
+                httpx.ConnectError,
+                httpx.TimeoutException,
+                httpx.RequestError,
+            ) as e:
+                last_exception = e
+                if attempt < max_retries:
+                    time.sleep(current_backoff)
+                    current_backoff *= 2  # Exponential backoff
+                else:
+                    raise last_exception from None
+
+        return None
+
+    return wrapper
 
 
 def terminate_process(proc: subprocess.Popen, timeout: float = 5.0) -> None:
@@ -42,10 +110,28 @@ def terminate_process(proc: subprocess.Popen, timeout: float = 5.0) -> None:
 class TestASGIUvicorn:
     @pytest.fixture(scope="function")
     def uvicorn_server(self):
+        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+        workers = "2" if github_actions else "4"  # Reduce workers in GitHub Actions
+
         proc = subprocess.Popen(
-            ["uvicorn", "tests.asgi_wsgi.asgi_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+            [
+                "uvicorn",
+                "tests.asgi_wsgi.asgi_app:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8000",
+                "--workers",
+                workers,
+            ]
         )
-        time.sleep(2)  # give the server time to start
+
+        # Wait for server to be ready with HTTP health check
+        server_url = "http://0.0.0.0:8000/"
+        if not wait_for_server(server_url, timeout=15, github_actions=github_actions):
+            terminate_process(proc)
+            pytest.fail("Uvicorn server failed to start within timeout")
+
         yield
         terminate_process(proc)
 
@@ -60,11 +146,21 @@ class TestASGIUvicorn:
     )
     def test_asgi_web_server_rate_limit(self, uvicorn_server, num_requests, positive_case):
         responses = []
-        with httpx.Client() as client:
+        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+        timeout = 10.0 if github_actions else 5.0
+
+        with httpx.Client(timeout=timeout) as client:
+
+            def make_request():
+                return client.get("http://0.0.0.0:8000/")
+
+            make_request_with_retry = retry_request(make_request, max_retries=3 if github_actions else 1, backoff=0.5)
+
             for _ in range(num_requests):
-                response = client.get("http://0.0.0.0:8000/")
+                response = make_request_with_retry()
                 responses.append(response.status_code)
                 time.sleep(0.1)  # small delay between requests
+
         if positive_case:
             assert all(code == 200 for code in responses)
         else:
@@ -99,7 +195,14 @@ class TestASGIHypercorn:
         if use_no_daemon and HYPERCORN_VERSION >= (0, 18, 0):
             pytest.xfail("--no-daemon behavior may be unstable in Hypercorn 0.18.0+")
 
-        cmd = ["hypercorn", "tests.asgi_wsgi.asgi_app:app", "--bind", "0.0.0.0:8000", "--workers", "4"]
+        cmd = [
+            "hypercorn",
+            "tests.asgi_wsgi.asgi_app:app",
+            "--bind",
+            "0.0.0.0:8000",
+            "--workers",
+            "4",
+        ]
 
         if use_no_daemon:
             # daemon=false config only available in Hypercorn 0.18.0+
@@ -137,6 +240,9 @@ class TestASGIHypercorn:
     @pytest.fixture(scope="function")
     def hypercorn_server_no_daemon(self):
         """Hypercorn server fixture without daemon mode (default behavior in Hypercorn >=0.18.0)."""
+        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+        workers = "2" if github_actions else "4"  # Reduce workers in GitHub Actions
+
         proc = subprocess.Popen(
             [
                 "hypercorn",
@@ -144,7 +250,7 @@ class TestASGIHypercorn:
                 "--bind",
                 "0.0.0.0:8001",
                 "--workers",
-                "4",
+                workers,
                 "--config",
                 "/dev/stdin",
             ],
@@ -154,23 +260,11 @@ class TestASGIHypercorn:
         proc.stdin.write("daemon = false\n")
         proc.stdin.close()
 
-        # Wait for server to start with retries
-        max_retries = 20
-        for _ in range(max_retries):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.5)
-                result = sock.connect_ex(("0.0.0.0", 8001))
-                sock.close()
-                if result == 0:
-                    break
-            except Exception:
-                pass
-            time.sleep(0.1)
-        else:
-            # Server didn't start, terminate and fail
+        # Wait for server to be ready with HTTP health check
+        server_url = "http://0.0.0.0:8001/"
+        if not wait_for_server(server_url, timeout=20, github_actions=github_actions):
             terminate_process(proc)
-            pytest.fail("Hypercorn server failed to start")
+            pytest.fail("Hypercorn server failed to start within timeout")
 
         yield
         terminate_process(proc)
@@ -190,11 +284,21 @@ class TestASGIHypercorn:
     def test_hypercorn_no_daemon_rate_limit(self, hypercorn_server_no_daemon, num_requests, positive_case):
         """Test rate limiting with Hypercorn server using --no-daemon flag."""
         responses = []
-        with httpx.Client() as client:
+        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+        timeout = 10.0 if github_actions else 5.0
+
+        with httpx.Client(timeout=timeout) as client:
+
+            def make_request():
+                return client.get("http://0.0.0.0:8001/")
+
+            make_request_with_retry = retry_request(make_request, max_retries=3 if github_actions else 1, backoff=0.5)
+
             for _ in range(num_requests):
-                response = client.get("http://0.0.0.0:8001/")
+                response = make_request_with_retry()
                 responses.append(response.status_code)
                 time.sleep(0.1)  # small delay between requests
+
         if positive_case:
             assert all(code == 200 for code in responses)
         else:
@@ -204,10 +308,26 @@ class TestASGIHypercorn:
 class TestWSGI:
     @pytest.fixture(scope="function")
     def gunicorn_server(self):
+        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+        workers = "2" if github_actions else "4"  # Reduce workers in GitHub Actions
+
         proc = subprocess.Popen(
-            ["gunicorn", "tests.asgi_wsgi.wsgi_app:app", "--bind", "0.0.0.0:8100", "--workers", "4"]
+            [
+                "gunicorn",
+                "tests.asgi_wsgi.wsgi_app:app",
+                "--bind",
+                "0.0.0.0:8100",
+                "--workers",
+                workers,
+            ]
         )
-        time.sleep(2)  # give the server time to start
+
+        # Wait for server to be ready with HTTP health check
+        server_url = "http://0.0.0.0:8100/"
+        if not wait_for_server(server_url, timeout=15, github_actions=github_actions):
+            terminate_process(proc)
+            pytest.fail("Gunicorn server failed to start within timeout")
+
         yield
         terminate_process(proc)
 
@@ -222,11 +342,21 @@ class TestWSGI:
     )
     def test_wsgi_web_server_rate_limit(self, gunicorn_server, num_requests, positive_case):
         responses = []
-        with httpx.Client() as client:
+        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+        timeout = 10.0 if github_actions else 5.0
+
+        with httpx.Client(timeout=timeout) as client:
+
+            def make_request():
+                return client.get("http://0.0.0.0:8100/")
+
+            make_request_with_retry = retry_request(make_request, max_retries=3 if github_actions else 1, backoff=0.5)
+
             for _ in range(num_requests):
-                response = client.get("http://0.0.0.0:8100/")
+                response = make_request_with_retry()
                 responses.append(response.status_code)
-                time.sleep(0.1)
+                time.sleep(0.1)  # small delay between requests
+
         if positive_case:
             assert all(code == 200 for code in responses)
         else:
