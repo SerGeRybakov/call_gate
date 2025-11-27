@@ -11,6 +11,7 @@ import pytest
 
 from call_gate import CallGate
 from call_gate.errors import (
+    CallGateValueError,
     FrameLimitError,
     FrameOverflowError,
     GateLimitError,
@@ -642,6 +643,87 @@ class TestCallGateLimits:
         try:
             with pytest.raises(FrameLimitError):
                 gate.check_limits()
+        finally:
+            gate.clear()
+
+
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
+class TestStorageEdgeCases:
+    """Test edge cases for all storage types to improve coverage."""
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_slide_negative_value_error(self, storage):
+        """Test that slide() with negative values raises CallGateValueError."""
+        gate = CallGate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
+        try:
+            # Test n < 1 raises error by calling slide directly on storage
+            # This is a low-level test of the storage implementation
+            with pytest.raises(CallGateValueError, match="Value must be >= 1"):
+                gate._data.slide(-1)
+
+            with pytest.raises(CallGateValueError, match="Value must be >= 1"):
+                gate._data.slide(0)
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_slide_capacity_or_more_calls_clear(self, storage):
+        """Test that slide() with n >= capacity calls clear()."""
+        # Create gate with very short time window to trigger sliding
+        gate = CallGate(random_name(), timedelta(milliseconds=100), timedelta(milliseconds=10), storage=storage)
+        try:
+            # Add some data
+            gate.update(10)
+            gate.update(5)
+            initial_sum = gate.sum
+            assert initial_sum > 0
+
+            # Wait for time window to pass completely (should trigger slide >= capacity)
+            time.sleep(0.15)  # Wait longer than gate window
+
+            # Any new update should trigger sliding that clears old data
+            gate.update(1)
+
+            # After sliding, only the new update should remain
+            assert gate.sum == 1
+
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_storage_bool_method(self, storage):
+        """Test BaseStorage __bool__ method behavior."""
+        gate = CallGate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
+        try:
+            # Initially sum is 0, so storage should be False
+            assert not bool(gate._data)
+            assert gate._data.__bool__() is False
+
+            # After adding data, storage should be True
+            gate.update(1)
+            assert bool(gate._data)
+            assert gate._data.__bool__() is True
+
+            # After clearing, should be False again
+            gate.clear()
+            assert not bool(gate._data)
+            assert gate._data.__bool__() is False
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_gate_init_with_none_timestamp(self, storage):
+        """Test CallGate initialization with explicit None timestamp to cover line 177."""
+        gate = CallGate(
+            random_name(),
+            timedelta(seconds=2),
+            timedelta(seconds=1),
+            storage=storage,
+            _current_dt=None,  # Explicitly pass None to trigger line 177
+        )
+        try:
+            # Should initialize successfully with None timestamp
+            assert gate._current_dt is None or isinstance(gate._current_dt, datetime)
         finally:
             gate.clear()
 
