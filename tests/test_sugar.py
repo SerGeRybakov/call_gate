@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -14,7 +14,9 @@ class TestSugar:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(("iterations", "value"), [(3, 5), (4, 2), (5, 3)])
     def test_decorator(self, storage, iterations, value):
-        gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage)
+        gate = create_call_gate(
+            random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage
+        )
 
         @gate(value=value)
         def decorated():
@@ -32,7 +34,9 @@ class TestSugar:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(("iterations", "value"), [(3, 5), (4, 2), (5, 3)])
     def test_context_manager(self, storage, iterations, value):
-        gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage)
+        gate = create_call_gate(
+            random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=10, storage=storage
+        )
 
         for _ in range(iterations):
             with gate(value=value):

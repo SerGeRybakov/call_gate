@@ -11,6 +11,7 @@ import atexit
 import multiprocessing
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from multiprocessing.managers import SyncManager
 from typing import Any, Optional
 
@@ -99,6 +100,27 @@ class BaseStorage(ABC):
     @abstractmethod
     def clear(self) -> None:
         """Clear the data contents (resets all values to ``0``)."""
+        pass
+
+    @abstractmethod
+    def get_timestamp(self) -> Optional[datetime]:
+        """Get the last update timestamp from storage.
+
+        :return: The last update timestamp, or None if not set.
+        """
+        pass
+
+    @abstractmethod
+    def set_timestamp(self, dt: datetime) -> None:
+        """Save the timestamp to storage.
+
+        :param dt: The timestamp to save.
+        """
+        pass
+
+    @abstractmethod
+    def clear_timestamp(self) -> None:
+        """Clear the timestamp from storage."""
         pass
 
     @abstractmethod

@@ -20,6 +20,7 @@ the gate values are lost.
 """
 
 from collections import deque
+from datetime import datetime
 from typing import Any, Optional
 
 from typing_extensions import Unpack
@@ -81,6 +82,7 @@ class SimpleStorage(BaseStorage):
                 self._data: deque = self.__get_clear_deque()
 
             self._sum = sum(self._data)
+            self._timestamp: Optional[datetime] = None
 
     @property
     def sum(self) -> int:
@@ -123,6 +125,7 @@ class SimpleStorage(BaseStorage):
             with self._lock:
                 self._data = self.__get_clear_deque()
                 self._sum = 0
+                self._timestamp = None
 
     def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
         """Atomically update the value of the most recent frame and the storage sum.
@@ -158,6 +161,30 @@ class SimpleStorage(BaseStorage):
 
             self._data[0] = new_value
             self._sum = new_sum
+
+    def get_timestamp(self) -> Optional[datetime]:
+        """Get the last update timestamp from storage.
+
+        :return: The last update timestamp, or None if not set.
+        """
+        with self._rlock:
+            with self._lock:
+                return self._timestamp
+
+    def set_timestamp(self, dt: datetime) -> None:
+        """Save the timestamp to storage.
+
+        :param dt: The timestamp to save.
+        """
+        with self._rlock:
+            with self._lock:
+                self._timestamp = dt
+
+    def clear_timestamp(self) -> None:
+        """Clear the timestamp from storage."""
+        with self._rlock:
+            with self._lock:
+                self._timestamp = None
 
     def __getitem__(self, index: int) -> int:
         with self._rlock:

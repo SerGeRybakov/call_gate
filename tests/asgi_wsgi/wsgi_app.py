@@ -4,11 +4,12 @@ from datetime import timedelta
 
 from flask import Flask, abort, jsonify
 
-from call_gate import CallGate, GateStorageType
+from call_gate import GateStorageType
+from tests.parameters import create_call_gate
 
 
 app = Flask(__name__)
-gate = CallGate(
+gate = create_call_gate(
     "api_gate",
     timedelta(seconds=2),
     timedelta(milliseconds=100),

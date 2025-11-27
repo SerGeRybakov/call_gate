@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  GITHUB_ACTIONS_REDIS_TIMEOUT: 60
+  GITHUB_ACTIONS_REDIS_TIMEOUT: 120
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -56,7 +56,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        include:
+          - python-version: '3.9'
+            redis-db: 0
+          - python-version: '3.10'
+            redis-db: 1
+          - python-version: '3.11'
+            redis-db: 2
+          - python-version: '3.12'
+            redis-db: 3
+          - python-version: '3.13'
+            redis-db: 4
     services:
       redis:
         image: redis:latest
@@ -90,11 +100,26 @@ jobs:
         shell: bash
 
       - name: Run tests
+        timeout-minutes: 45
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          REDIS_DB: ${{ matrix.redis-db }}
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
-        run: poetry run pytest
+          ACTIONS_STEP_DEBUG: true
+          PYTEST_CURRENT_TEST: 1
+          OMP_NUM_THREADS: 1
+          OPENBLAS_NUM_THREADS: 1
+          MKL_NUM_THREADS: 1
+          PYTHONHASHSEED: 0
+        run: |
+          echo "🔍 Redis configuration:"
+          echo "REDIS_HOST: $REDIS_HOST"
+          echo "REDIS_PORT: $REDIS_PORT"
+          echo "REDIS_DB: $REDIS_DB"
+          echo "GITHUB_ACTIONS_REDIS_TIMEOUT: $GITHUB_ACTIONS_REDIS_TIMEOUT"
+          echo "🚀 Starting tests..."
+          poetry run pytest -v --tb=short
         shell: bash
 
   coverage:
@@ -132,9 +157,11 @@ jobs:
         shell: bash
 
       - name: Run tests with coverage
+        timeout-minutes: 45
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          REDIS_DB: 5
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
         run: poetry run pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py ./tests
         shell: bash

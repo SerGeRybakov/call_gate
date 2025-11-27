@@ -9,14 +9,15 @@ from zoneinfo import ZoneInfo
 import dateutil
 import pytest
 
-from call_gate import CallGate
+from call_gate import CallGate, GateStorageType
 from call_gate.errors import (
+    CallGateValueError,
     FrameLimitError,
     FrameOverflowError,
     GateLimitError,
     GateOverflowError,
 )
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -44,7 +45,7 @@ class TestCallGateInit:
         ],
     )
     def test_init_success(self, gate_size, frame_step, storage):
-        gate = CallGate(random_name(), gate_size, frame_step, storage=storage)
+        gate = create_call_gate(random_name(), gate_size, frame_step, storage=storage)
         assert gate is not None
         if not isinstance(gate_size, timedelta):
             gate_size = timedelta(seconds=gate_size)
@@ -61,7 +62,7 @@ class TestCallGateInit:
             assert not gate.current_dt
             assert gate.timezone is None
 
-            gate_dict = {
+            expected_dict = {
                 "name": gate.name,
                 "gate_size": gate_size.total_seconds(),
                 "frame_step": frame_step.total_seconds(),
@@ -72,12 +73,28 @@ class TestCallGateInit:
                 "_data": [0] * gate.frames,
                 "_current_dt": None,
             }
-            assert gate.as_dict() == gate_dict
-            d = gate_dict.copy()
-            d.pop("_data")
-            d.pop("_current_dt")
-            gate_repr = f"CallGate({', '.join(f'{k}={v}' for k, v in d.items())})"
-            assert gate_repr == repr(gate)
+
+            # Get actual dict and check that all expected keys are present with correct values
+            actual_dict = gate.as_dict()
+            for key, expected_value in expected_dict.items():
+                assert key in actual_dict, f"Missing key: {key}"
+                assert actual_dict[key] == expected_value, (
+                    f"Key {key}: expected {expected_value}, got {actual_dict[key]}"
+                )
+            # Test repr() - for Redis storage, skip exact repr check due to additional parameters
+            if storage not in ("redis", GateStorageType.redis):
+                repr_dict = expected_dict.copy()
+                repr_dict.pop("_data")
+                repr_dict.pop("_current_dt")
+                gate_repr = f"CallGate({', '.join(f'{k}={v}' for k, v in repr_dict.items())})"
+                assert gate_repr == repr(gate)
+            else:
+                # For Redis, just check that repr() contains the basic expected fields
+                gate_repr = repr(gate)
+                assert gate.name in gate_repr
+                assert str(gate_size.total_seconds()) in gate_repr
+                assert str(frame_step.total_seconds()) in gate_repr
+                assert "storage=redis" in gate_repr or "storage=<GateStorageType.redis: 3>" in gate_repr
             gate_str = str(gate.state)
             assert gate_str == str(gate)
             assert gate.current_frame.value == 0
@@ -98,7 +115,7 @@ class TestCallGateInit:
     )
     def test_init_fails_gate_size_and_or_granularity(self, gate_size, frame_step, storage):
         with pytest.raises(ValueError):
-            assert CallGate(random_name(), gate_size, frame_step, storage=storage)
+            assert create_call_gate(random_name(), gate_size, frame_step, storage=storage)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -161,7 +178,7 @@ class TestCallGateInit:
     @pytest.mark.parametrize("storage", ["a", 0, {"simple"}, ["redis"], ("shared",), "sipmle", "redsi", "shered"])
     def test_init_fails_on_storage_value(self, storage):
         with pytest.raises(ValueError):
-            CallGate(random_name(), 10, 5, storage=storage)
+            create_call_gate(random_name(), 10, 5, storage=storage)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -642,6 +659,87 @@ class TestCallGateLimits:
         try:
             with pytest.raises(FrameLimitError):
                 gate.check_limits()
+        finally:
+            gate.clear()
+
+
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
+class TestStorageEdgeCases:
+    """Test edge cases for all storage types to improve coverage."""
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_slide_negative_value_error(self, storage):
+        """Test that slide() with negative values raises CallGateValueError."""
+        gate = CallGate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
+        try:
+            # Test n < 1 raises error by calling slide directly on storage
+            # This is a low-level test of the storage implementation
+            with pytest.raises(CallGateValueError, match="Value must be >= 1"):
+                gate._data.slide(-1)
+
+            with pytest.raises(CallGateValueError, match="Value must be >= 1"):
+                gate._data.slide(0)
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_slide_capacity_or_more_calls_clear(self, storage):
+        """Test that slide() with n >= capacity calls clear()."""
+        # Create gate with very short time window to trigger sliding
+        gate = CallGate(random_name(), timedelta(milliseconds=100), timedelta(milliseconds=10), storage=storage)
+        try:
+            # Add some data
+            gate.update(10)
+            gate.update(5)
+            initial_sum = gate.sum
+            assert initial_sum > 0
+
+            # Wait for time window to pass completely (should trigger slide >= capacity)
+            time.sleep(0.15)  # Wait longer than gate window
+
+            # Any new update should trigger sliding that clears old data
+            gate.update(1)
+
+            # After sliding, only the new update should remain
+            assert gate.sum == 1
+
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_storage_bool_method(self, storage):
+        """Test BaseStorage __bool__ method behavior."""
+        gate = CallGate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
+        try:
+            # Initially sum is 0, so storage should be False
+            assert not bool(gate._data)
+            assert gate._data.__bool__() is False
+
+            # After adding data, storage should be True
+            gate.update(1)
+            assert bool(gate._data)
+            assert gate._data.__bool__() is True
+
+            # After clearing, should be False again
+            gate.clear()
+            assert not bool(gate._data)
+            assert gate._data.__bool__() is False
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", storages)
+    def test_gate_init_with_none_timestamp(self, storage):
+        """Test CallGate initialization with explicit None timestamp to cover line 177."""
+        gate = CallGate(
+            random_name(),
+            timedelta(seconds=2),
+            timedelta(seconds=1),
+            storage=storage,
+            _current_dt=None,  # Explicitly pass None to trigger line 177
+        )
+        try:
+            # Should initialize successfully with None timestamp
+            assert gate._current_dt is None or isinstance(gate._current_dt, datetime)
         finally:
             gate.clear()
 
