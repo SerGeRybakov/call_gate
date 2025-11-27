@@ -13,6 +13,27 @@ except (ImportError, Exception):
     HYPERCORN_VERSION = (0, 0, 0)
 
 
+def terminate_process(proc: subprocess.Popen, timeout: float = 5.0) -> None:
+    """Safely terminate a subprocess with timeout.
+
+    First tries terminate(), then kill() if process doesn't exit within timeout.
+    This prevents hanging tests in Python 3.12+ where subprocess.wait() can hang.
+
+    :param proc: The subprocess to terminate.
+    :param timeout: Maximum time to wait for process to terminate (default: 5 seconds).
+    """
+    if proc.poll() is not None:
+        return  # Process already terminated
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Force kill if terminate didn't work
+        proc.kill()
+        proc.wait()  # Wait for kill to complete
+
+
 class TestASGIUvicorn:
     @pytest.fixture(scope="function")
     def uvicorn_server(self):
@@ -21,8 +42,7 @@ class TestASGIUvicorn:
         )
         time.sleep(2)  # give the server time to start
         yield
-        proc.terminate()
-        proc.wait()
+        terminate_process(proc)
 
     @pytest.mark.parametrize(
         ("num_requests", "positive_case"),
@@ -100,8 +120,7 @@ class TestASGIHypercorn:
             )
         time.sleep(2)  # give the server time to start
         stderr_output = proc.stderr.read()
-        proc.terminate()
-        proc.wait()
+        terminate_process(proc)
 
         daemon_error_present = "AssertionError: daemonic processes are not allowed to have children" in stderr_output
 
@@ -131,8 +150,7 @@ class TestASGIHypercorn:
         proc.stdin.close()
         time.sleep(2)  # give the server time to start
         yield
-        proc.terminate()
-        proc.wait()
+        terminate_process(proc)
 
     @pytest.mark.parametrize(
         ("num_requests", "positive_case"),
@@ -168,8 +186,7 @@ class TestWSGI:
         )
         time.sleep(2)  # give the server time to start
         yield
-        proc.terminate()
-        proc.wait()
+        terminate_process(proc)
 
     @pytest.mark.parametrize(
         ("num_requests", "positive_case"),

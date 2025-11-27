@@ -256,8 +256,12 @@ class CallGate:
             self._current_dt = stored_timestamp
 
     def __del__(self) -> None:
-        if hasattr(self, "_executor") and self._executor is not None:
-            self._executor.shutdown(wait=True, cancel_futures=True)
+        """Cleanup resources on deletion."""
+        try:
+            if hasattr(self, "_executor") and self._executor is not None:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:  # noqa: S110
+            pass  # Ignore errors during cleanup
 
     def as_dict(self) -> dict:
         """Serialize the gate to a dictionary.

@@ -90,6 +90,7 @@ jobs:
         shell: bash
 
       - name: Run tests
+        timeout-minutes: 30
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
@@ -132,6 +133,7 @@ jobs:
         shell: bash
 
       - name: Run tests with coverage
+        timeout-minutes: 30
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
