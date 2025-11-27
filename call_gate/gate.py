@@ -207,7 +207,6 @@ class CallGate:
         self._gate_size, self._frame_step = self._validate_and_set_gate_and_granularity(gate_size, frame_step)
         self._gate_limit, self._frame_limit = self._validate_and_set_limits(gate_limit, frame_limit)
         self._frames: int = int(self._gate_size // self._frame_step)
-        self._current_dt: datetime = self._validate_and_set_timestamp(_current_dt)
         self._kwargs = kwargs
 
         storage_err = ValueError("Invalid `storage`: gate storage must be one of `GateStorageType` values.")
@@ -247,6 +246,14 @@ class CallGate:
         if kwargs:  # no cov
             kw.update(**kwargs)  # type: ignore[call-overload]
         self._data: BaseStorage = storage_type(name, self._frames, manager=manager, **kw)  # type: ignore[arg-type]
+
+        # Initialize _current_dt: validate provided value first, then try to restore from storage
+        if _current_dt is not None:
+            self._current_dt: Optional[datetime] = self._validate_and_set_timestamp(_current_dt)
+        else:
+            # Try to restore timestamp from storage
+            stored_timestamp = self._data.get_timestamp()
+            self._current_dt = stored_timestamp
 
     def __del__(self) -> None:
         if hasattr(self, "_executor") and self._executor is not None:
@@ -316,6 +323,7 @@ class CallGate:
         current_step = self._current_step()
         if not self._current_dt:
             self._current_dt = current_step
+            self._data.set_timestamp(current_step)
             return
         diff = int((current_step - self._current_dt) / self._frame_step)
         if diff >= self._frames:
@@ -323,6 +331,7 @@ class CallGate:
         elif diff > 0:
             self._data.slide(diff)
             self._current_dt = current_step
+            self._data.set_timestamp(current_step)
 
     @dual
     def update(self, value: int = 1, throw: bool = False) -> None:
@@ -468,6 +477,7 @@ class CallGate:
         """
         with self._lock:
             self._data.clear()
+            self._data.clear_timestamp()
             self._current_dt = None
 
     def __call__(self, value: int = 1, *, throw: bool = False) -> _CallGateWrapper:

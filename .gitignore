@@ -111,8 +111,12 @@ celerybeat.pid
 ../*.env
 ../../*.env
 .venv
+.venv*
+venv*
 env/
 venv/
+venv*/
+.venv*/
 ENV/
 ../ENV/
 ../../ENV/
@@ -150,3 +154,5 @@ tests/code_coverage/
 
 /tmp.py
 tests/parameters/templates/
+ARTICLE.md
+.tool-versions

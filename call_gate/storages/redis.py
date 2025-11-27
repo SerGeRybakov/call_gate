@@ -16,6 +16,7 @@ the gate values are not lost.
 import time
 import uuid
 
+from datetime import datetime
 from threading import get_ident
 from types import TracebackType
 from typing import Any, Optional
@@ -113,6 +114,7 @@ class RedisStorage(BaseStorage):
         self._client: Redis = Redis(**self._redis_kwargs)
         self._data: str = self.name  # Redis key for the list
         self._sum: str = f"{self.name}:sum"  # Redis key for the sum
+        self._timestamp: str = f"{self.name}:timestamp"  # Redis key for the timestamp
         self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
         self._rlock = RedisReentrantLock(self._client, self.name)
 
@@ -224,6 +226,7 @@ class RedisStorage(BaseStorage):
         lua_script = """
         local key_list = KEYS[1]
         local key_sum = KEYS[2]
+        local key_timestamp = KEYS[3]
         local capacity = tonumber(ARGV[1])
         local data = {}
         local total = 0
@@ -236,10 +239,11 @@ class RedisStorage(BaseStorage):
             redis.call("RPUSH", key_list, data[i])
         end
         redis.call("SET", key_sum, total)
+        redis.call("DEL", key_timestamp)
         """
         with self._rlock:
             with self._lock:
-                self._client.eval(lua_script, 2, self._data, self._sum, str(self.capacity))
+                self._client.eval(lua_script, 3, self._data, self._sum, self._timestamp, str(self.capacity))
 
     @property
     def sum(self) -> int:
@@ -295,7 +299,9 @@ class RedisStorage(BaseStorage):
         lua_script = """
         local key_list = KEYS[1]
         local key_sum = KEYS[2]
+        local key_timestamp = KEYS[3]
         local n = tonumber(ARGV[1])
+        local timestamp = ARGV[2]
         local removed_sum = 0
         for i = 1, n do
             local val = redis.call("RPOP", key_list)
@@ -307,6 +313,7 @@ class RedisStorage(BaseStorage):
         local current_sum = tonumber(redis.call("GET", key_sum) or "0")
         local new_sum = current_sum - removed_sum
         redis.call("SET", key_sum, new_sum)
+        redis.call("SET", key_timestamp, timestamp)
         """
         if n < 1:
             raise CallGateValueError("Value must be >= 1.")
@@ -314,7 +321,8 @@ class RedisStorage(BaseStorage):
             self.clear()
         with self._rlock:
             with self._lock:
-                self._client.eval(lua_script, 2, self._data, self._sum, str(n))
+                current_timestamp = datetime.now().isoformat()
+                self._client.eval(lua_script, 3, self._data, self._sum, self._timestamp, str(n), current_timestamp)
 
     def as_list(self) -> list[int]:
         """Get the current sliding storage as a list of integers.
@@ -346,9 +354,11 @@ class RedisStorage(BaseStorage):
         lua_script = """
         local key_list = KEYS[1]
         local key_sum = KEYS[2]
+        local key_timestamp = KEYS[3]
         local inc_value = tonumber(ARGV[1])
         local frame_limit = tonumber(ARGV[2])
         local gate_limit = tonumber(ARGV[3])
+        local timestamp = ARGV[4]
         local current_value = tonumber(redis.call("LINDEX", key_list, 0) or "0")
         local new_value = current_value + inc_value
         local current_sum = tonumber(redis.call("GET", key_sum) or "0")
@@ -367,10 +377,23 @@ class RedisStorage(BaseStorage):
         end
         redis.call("LSET", key_list, 0, new_value)
         redis.call("SET", key_sum, new_sum)
+        redis.call("SET", key_timestamp, timestamp)
         return new_value
         """
         try:
-            self._client.eval(lua_script, 2, self._data, self._sum, str(value), str(frame_limit), str(gate_limit))
+            # Get current timestamp for atomic update
+            current_timestamp = datetime.now().isoformat()
+            self._client.eval(
+                lua_script,
+                3,
+                self._data,
+                self._sum,
+                self._timestamp,
+                str(value),
+                str(frame_limit),
+                str(gate_limit),
+                current_timestamp,
+            )
         except ResponseError as e:
             error_message = str(e)
             if "Frame limit exceeded" in error_message:
@@ -382,6 +405,33 @@ class RedisStorage(BaseStorage):
             if "Frame overflow" in error_message:
                 raise FrameOverflowError("Frame value must be >= 0.") from e
             raise e
+
+    def get_timestamp(self) -> Optional[datetime]:
+        """Get the last update timestamp from storage.
+
+        :return: The last update timestamp, or None if not set.
+        """
+        with self._rlock:
+            with self._lock:
+                ts_str: str = self._client.get(self._timestamp)
+                if ts_str:
+                    return datetime.fromisoformat(ts_str)
+                return None
+
+    def set_timestamp(self, dt: datetime) -> None:
+        """Save the timestamp to storage.
+
+        :param dt: The timestamp to save.
+        """
+        with self._rlock:
+            with self._lock:
+                self._client.set(self._timestamp, dt.isoformat())
+
+    def clear_timestamp(self) -> None:
+        """Clear the timestamp from storage."""
+        with self._rlock:
+            with self._lock:
+                self._client.delete(self._timestamp)
 
     def __getitem__(self, index: int) -> int:
         """Get the element at the specified index from the storage.
@@ -421,5 +471,8 @@ class RedisStorage(BaseStorage):
         self.__dict__.update(state)
 
         self._client = Redis(**self._redis_kwargs)
+        # Ensure timestamp key is set if it wasn't in the serialized state
+        if not hasattr(self, "_timestamp"):
+            self._timestamp = f"{self.name}:timestamp"
         self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
         self._rlock = RedisReentrantLock(self._client, self.name)

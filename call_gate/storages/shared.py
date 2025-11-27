@@ -12,6 +12,7 @@ is restarted, the gate values are lost.
 """
 
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 from typing_extensions import Unpack
@@ -62,6 +63,9 @@ class SharedMemoryStorage(BaseStorage):
                 self._data = manager.list([0] * capacity)
                 self._sum = manager.Value("i", 0)
 
+            # Initialize timestamp as shared Value (double for timestamp)
+            self._timestamp = manager.Value("d", 0.0)
+
     @property
     def sum(self) -> int:
         """Get the current sum of the storage."""
@@ -95,6 +99,7 @@ class SharedMemoryStorage(BaseStorage):
             with self._lock:
                 self._data[:] = [0] * self.capacity
                 self._sum.value = 0
+                self._timestamp.value = 0.0
 
     def slide(self, n: int) -> None:
         """Slide data to the right by n frames.
@@ -148,6 +153,31 @@ class SharedMemoryStorage(BaseStorage):
 
                 self._data[0] = new_value
                 self._sum.value = new_sum
+
+    def get_timestamp(self) -> Optional[datetime]:
+        """Get the last update timestamp from storage.
+
+        :return: The last update timestamp, or None if not set.
+        """
+        with self._rlock:
+            with self._lock:
+                ts = self._timestamp.value
+                return datetime.fromtimestamp(ts) if ts > 0 else None
+
+    def set_timestamp(self, dt: datetime) -> None:
+        """Save the timestamp to storage.
+
+        :param dt: The timestamp to save.
+        """
+        with self._rlock:
+            with self._lock:
+                self._timestamp.value = dt.timestamp()
+
+    def clear_timestamp(self) -> None:
+        """Clear the timestamp from storage."""
+        with self._rlock:
+            with self._lock:
+                self._timestamp.value = 0.0
 
     def __getitem__(self, index: int) -> int:
         with self._rlock:
