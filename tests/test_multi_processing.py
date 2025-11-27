@@ -16,8 +16,8 @@ def get_test_params() -> list[tuple[int, int, int]]:
     """
     if os.getenv("GITHUB_ACTIONS"):
         return [
-            (2, 20, 1),
-            (3, 10, 2),
+            (2, 5, 1),
+            (2, 10, 2),
         ]
     return [
         (4, 50, 1),

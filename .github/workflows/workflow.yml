@@ -107,6 +107,11 @@ jobs:
           REDIS_DB: ${{ matrix.redis-db }}
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
           ACTIONS_STEP_DEBUG: true
+          PYTEST_CURRENT_TEST: 1
+          OMP_NUM_THREADS: 1
+          OPENBLAS_NUM_THREADS: 1
+          MKL_NUM_THREADS: 1
+          PYTHONHASHSEED: 0
         run: |
           echo "🔍 Redis configuration:"
           echo "REDIS_HOST: $REDIS_HOST"
