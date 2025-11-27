@@ -68,7 +68,10 @@ redis = ">=5.0.0"
 faker = ">=19.0.0"
 uvicorn = ">=0.22.0"
 gunicorn = ">=21.2.0"
-hypercorn = ">=0.14.3"
+hypercorn = [
+    {version = ">=0.14.3,<0.18.0", markers = "python_version < '3.10'"},
+    {version = ">=0.18.0", markers = "python_version >= '3.10'"}
+]
 fastapi = ">=0.100.0"
 flask = "^3.1.0"
 httpx = ">=0.24.1"
@@ -138,6 +141,8 @@ ignore = [
   "PTH123",  # Use 'os.path' instead of 'pathlib.Path'
   "S101",  # Use of assert detected
   "S311",  # Standard pseudo-random generators are not suitable for security/cryptographic purposes
+  "S603",
+  "S607"
 ]
 
 # https://docs.astral.sh/ruff/settings/#lintpylint

@@ -180,7 +180,8 @@ processes may be un-safe and may result in unexpected behaviour, so don't rely o
 or in WSGI/ASGI workers-forking applications.
 
 The ``shared`` storage is a thread-safe and process-safe. You can use it safely in multiple processes 
-and in WSGI/ASGI applications started from one parent process.
+and in WSGI/ASGI applications started from one parent process. **Note**: For Hypercorn >= 0.18.0, you must 
+disable daemon mode (`daemon = false` in config) to use shared memory storage with multiple workers.
 
 The main disadvantage of these two storages - they are in-memory and do not persist their state between restarts.
 
@@ -189,6 +190,21 @@ You can easily use the same gate in multiple processes, even in separated Docker
 to the same Redis-server.
 
 Coroutine safety is ensured for all of them by the main class: ``CallGate``.
+
+### ASGI Server Compatibility
+
+**Uvicorn & Gunicorn**: Work out of the box with all storage types.
+
+**Hypercorn**: 
+- **< 0.18.0**: Only `redis` storage works with multiple workers
+- **>= 0.18.0**: All storage types work when daemon mode is disabled:
+  ```bash
+  # Using stdin config
+  echo 'daemon = false' | hypercorn myapp:app --config /dev/stdin --workers 4
+  
+  # Using config file
+  hypercorn myapp:app --config hypercorn.toml --workers 4
+  ```
 
 If you are using a remote Redis-server, just pass the 
 [client parameters](https://redis-py.readthedocs.io/en/stable/connections.html) to the `CallGate` constructor `kwargs`:
@@ -380,9 +396,22 @@ if __name__ == "__main__":
 
 ## Remarkable Notes
 - The package is compatible with Python 3.9+.
-- Under `WSGI/ASGI applications` I mean the applications such as `gunicorn` or `uvicorn`. Unfortunately, 
-  `CallGate` can not be used with `hypercorn` as it spawns each worker as a daemon process, which do not allow 
-  child processes. There is a special test for this case: ["test_hepercorn_server_fails"](tests/test_asgi_wsgi.py#L40).   
+- Under `WSGI/ASGI applications` I mean the applications such as `gunicorn` or `uvicorn`. 
+- **Hypercorn compatibility**: 
+  - **Hypercorn < 0.18.0**: `CallGate` cannot be used with multiple workers as Hypercorn spawns each worker as a daemon process, which do not allow child processes.
+  - **Hypercorn >= 0.18.0**: `CallGate` can be used by disabling daemon mode via configuration file:
+    ```bash
+    echo 'daemon = false' | hypercorn app:app --config /dev/stdin --workers 4
+    ```
+    Or using a TOML config file:
+    ```toml
+    # hypercorn.toml
+    daemon = false
+    ```
+    ```bash
+    hypercorn app:app --config hypercorn.toml --workers 4
+    ```
+  - There are special tests for both cases: ["test_hypercorn_server_daemon_behavior"](tests/test_asgi_wsgi.py) and ["test_hypercorn_no_daemon_rate_limit"](tests/test_asgi_wsgi.py).   
 - All the updates are atomic, so no race conditions shall occur.
 - The majority of Redis calls is performed via 
 [Lua-scripts](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/), what makes them run 
