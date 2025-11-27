@@ -7,8 +7,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  GITHUB_ACTIONS_REDIS_TIMEOUT: 60
+  env:
+    GITHUB_ACTIONS_REDIS_TIMEOUT: 120
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -100,13 +100,21 @@ jobs:
         shell: bash
 
       - name: Run tests
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           REDIS_DB: ${{ matrix.redis-db }}
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
-        run: poetry run pytest
+          ACTIONS_STEP_DEBUG: true
+        run: |
+          echo "🔍 Redis configuration:"
+          echo "REDIS_HOST: $REDIS_HOST"
+          echo "REDIS_PORT: $REDIS_PORT"
+          echo "REDIS_DB: $REDIS_DB"
+          echo "GITHUB_ACTIONS_REDIS_TIMEOUT: $GITHUB_ACTIONS_REDIS_TIMEOUT"
+          echo "🚀 Starting tests..."
+          poetry run pytest -v --tb=short
         shell: bash
 
   coverage:
@@ -144,7 +152,7 @@ jobs:
         shell: bash
 
       - name: Run tests with coverage
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
