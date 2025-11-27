@@ -58,20 +58,20 @@ jobs:
       matrix:
         include:
           - python-version: '3.9'
-            redis-port: 6379
+            redis-db: 0
           - python-version: '3.10'
-            redis-port: 6380
+            redis-db: 1
           - python-version: '3.11'
-            redis-port: 6381
+            redis-db: 2
           - python-version: '3.12'
-            redis-port: 6382
+            redis-db: 3
           - python-version: '3.13'
-            redis-port: 6383
+            redis-db: 4
     services:
       redis:
         image: redis:latest
         ports:
-          - ${{ matrix.redis-port }}:6379
+          - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -103,7 +103,8 @@ jobs:
         timeout-minutes: 30
         env:
           REDIS_HOST: localhost
-          REDIS_PORT: ${{ matrix.redis-port }}
+          REDIS_PORT: 6379
+          REDIS_DB: ${{ matrix.redis-db }}
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
         run: poetry run pytest
         shell: bash
@@ -147,6 +148,7 @@ jobs:
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          REDIS_DB: 5
           GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}
         run: poetry run pytest --cov-fail-under=97 --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py ./tests
         shell: bash

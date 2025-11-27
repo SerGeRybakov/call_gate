@@ -49,6 +49,8 @@ def get_redis_kwargs(db=None, **extra_kwargs):
         redis_kwargs["host"] = os.environ["REDIS_HOST"]
     if "REDIS_PORT" in os.environ:
         redis_kwargs["port"] = int(os.environ["REDIS_PORT"])
+    if "REDIS_DB" in os.environ:
+        redis_kwargs["db"] = int(os.environ["REDIS_DB"])
 
     # Apply any extra parameters (can override defaults)
     redis_kwargs.update(extra_kwargs)
