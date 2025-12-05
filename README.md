@@ -187,7 +187,7 @@ The main disadvantage of these two storages - they are in-memory and do not pers
 
 The solution is ``redis`` storage, which is not just thread-safe and process-safe as well, but also distributable.
 You can easily use the same gate in multiple processes, even in separated Docker-containers connected 
-to the same Redis-server.
+to the same Redis-server or Redis cluster.
 
 Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
@@ -206,8 +206,60 @@ Coroutine safety is ensured for all of them by the main class: ``CallGate``.
   hypercorn myapp:app --config hypercorn.toml --workers 4
   ```
 
-If you are using a remote Redis-server, just pass the 
-[client parameters](https://redis-py.readthedocs.io/en/stable/connections.html) to the `CallGate` constructor `kwargs`:
+### Redis Configuration
+
+**Recommended approach (v1.1.0+):** Use pre-initialized Redis client:
+
+```python
+from redis import Redis
+
+client = Redis(
+    host="10.0.0.1",
+    port=16379,
+    db=0,
+    password="secret",
+    decode_responses=True,  # Required
+    socket_timeout=5,
+    socket_connect_timeout=5
+)
+
+gate = CallGate(
+    "my_gate", 
+    timedelta(seconds=10), 
+    timedelta(seconds=1), 
+    storage=GateStorageType.redis,
+    redis_client=client
+)
+```
+
+**Redis Cluster support:**
+
+```python
+from redis import RedisCluster
+from redis.cluster import ClusterNode
+
+cluster_client = RedisCluster(
+    startup_nodes=[
+        ClusterNode("node1", 7001),
+        ClusterNode("node2", 7002), 
+        ClusterNode("node3", 7003)
+    ],
+    decode_responses=True,  # Required
+    skip_full_coverage_check=True,
+    socket_timeout=5,
+    socket_connect_timeout=5
+)
+
+gate = CallGate(
+    "my_gate", 
+    timedelta(seconds=10), 
+    timedelta(seconds=1), 
+    storage=GateStorageType.redis,
+    redis_client=cluster_client
+)
+```
+
+**Legacy approach (deprecated, will be removed in v2.0.0):**
 
 ```python
 gate = CallGate(
@@ -222,14 +274,11 @@ gate = CallGate(
     ...
 ) 
 ```
-The default parameters are: 
-- `host`: `"localhost"`
-- `port`: `6379`, 
-- `db`: `15`, 
-- `password`: `None`.
 
-Also, be noted that the client decodes the Redis-server responses by default. It can not be changed - the 
-`decode_responses` parameter is ignored.
+**Important notes:**
+- `decode_responses=True` is required for proper operation
+- Connection timeouts are recommended to prevent hanging operations
+- Redis client validation (ping) is performed during CallGate initialization
 
 ### Use Directly
 
@@ -301,12 +350,13 @@ The package provides a pack of custom exceptions. Basically, you may be interest
 - `ThrottlingError` - a base limit error, raised when rate limits are reached or violated.
 - `FrameLimitError` - (derives from `ThrottlingError`) a limit error, raised when frame limit is reached or violated. 
 - `GateLimitError` - (derives from `ThrottlingError`) a limit error, raised when gate limit is reached or violated.
+- `CallGateRedisConfigurationError` - raised when Redis client configuration is invalid.
 
 These errors are handled automatically by the library, but you may also choose to throw them explicitly by switching
 the `throw` parameter to `True`
 
 ```python
-from call_gate import FrameLimitError, GateLimitError, ThrottlingError
+from call_gate import FrameLimitError, GateLimitError, ThrottlingError, CallGateRedisConfigurationError
 
 while True:
     try:
@@ -315,6 +365,8 @@ while True:
         print(f"Frame limit exceeded! {e}")
     except GateLimitError as e:
         print(f"Gate limit exceeded! {e}")
+    except CallGateRedisConfigurationError as e:
+        print(f"Redis configuration error! {e}")
         
     # or
     
@@ -416,6 +468,8 @@ if __name__ == "__main__":
 - The majority of Redis calls is performed via 
 [Lua-scripts](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/), what makes them run 
 on the Redis-server side.
+- **Redis Cluster Support**: CallGate supports both single Redis instances and Redis clusters with automatic failover and recovery.
+- **Connection Validation**: Redis clients are validated with ping() during CallGate initialization to ensure connectivity.
 - The maximal value guaranteed for `in-memory` storages is `2**64 - 1`, but for Redis it is ``2**53 - 1``
 only because Redis uses [Lua 5.1](https://www.lua.org/manual/5.1/).  
 Lua 5.1 works with numbers as `double64` bit floating point numbers in 

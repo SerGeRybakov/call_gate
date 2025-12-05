@@ -65,19 +65,37 @@ class TestCallGateMultiprocessing:
         multiprocessing.set_start_method(start_method, force=True)
         gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         processes = []
-        for _ in range(num_processes):
-            p = multiprocessing.Process(target=process_worker, args=(gate, num_updates, update_value))
-            processes.append(p)
-            p.start()
-        for p in processes:
-            p.join()
-        expected = num_processes * num_updates * update_value
         try:
+            for _ in range(num_processes):
+                p = multiprocessing.Process(target=process_worker, args=(gate, num_updates, update_value))
+                processes.append(p)
+                p.start()
+
+            # Wait for processes with timeout and proper cleanup
+            for p in processes:
+                p.join(timeout=30)  # 30 second timeout per process
+                if p.is_alive():
+                    p.terminate()
+                    p.join(timeout=5)  # Give 5 seconds for graceful termination
+                    if p.is_alive():
+                        p.kill()  # Force kill if still alive
+
+            expected = num_processes * num_updates * update_value
             if storage in ("simple", GateStorageType.simple):
                 assert gate.sum != expected
             else:
                 assert gate.sum == expected
         finally:
+            # Ensure all processes are cleaned up
+            for p in processes:
+                if p.is_alive():
+                    try:
+                        p.terminate()
+                        p.join(timeout=2)
+                        if p.is_alive():
+                            p.kill()
+                    except Exception:
+                        pass  # Ignore cleanup errors
             gate.clear()
 
     @pytest.mark.parametrize("start_method", start_methods)
@@ -92,19 +110,37 @@ class TestCallGateMultiprocessing:
         multiprocessing.set_start_method(start_method, force=True)
         gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         processes = []
-        for _ in range(num_processes):
-            p = multiprocessing.Process(target=worker_context, args=(gate, iterations, update_value))
-            processes.append(p)
-            p.start()
-        for p in processes:
-            p.join()
-        expected = num_processes * iterations * update_value
         try:
+            for _ in range(num_processes):
+                p = multiprocessing.Process(target=worker_context, args=(gate, iterations, update_value))
+                processes.append(p)
+                p.start()
+
+            # Wait for processes with timeout and proper cleanup
+            for p in processes:
+                p.join(timeout=30)  # 30 second timeout per process
+                if p.is_alive():
+                    p.terminate()
+                    p.join(timeout=5)  # Give 5 seconds for graceful termination
+                    if p.is_alive():
+                        p.kill()  # Force kill if still alive
+
+            expected = num_processes * iterations * update_value
             if storage in ("simple", GateStorageType.simple):
                 assert gate.sum != expected
             else:
                 assert gate.sum == expected
         finally:
+            # Ensure all processes are cleaned up
+            for p in processes:
+                if p.is_alive():
+                    try:
+                        p.terminate()
+                        p.join(timeout=2)
+                        if p.is_alive():
+                            p.kill()
+                    except Exception:
+                        pass  # Ignore cleanup errors
             gate.clear()
 
     @pytest.mark.parametrize("start_method", start_methods)
@@ -119,19 +155,37 @@ class TestCallGateMultiprocessing:
         multiprocessing.set_start_method(start_method, force=True)
         gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         processes = []
-        for _ in range(num_processes):
-            p = multiprocessing.Process(target=worker_decorator, args=(gate, iterations, update_value))
-            processes.append(p)
-            p.start()
-        for p in processes:
-            p.join()
-        expected = num_processes * iterations * update_value
         try:
+            for _ in range(num_processes):
+                p = multiprocessing.Process(target=worker_decorator, args=(gate, iterations, update_value))
+                processes.append(p)
+                p.start()
+
+            # Wait for processes with timeout and proper cleanup
+            for p in processes:
+                p.join(timeout=30)  # 30 second timeout per process
+                if p.is_alive():
+                    p.terminate()
+                    p.join(timeout=5)  # Give 5 seconds for graceful termination
+                    if p.is_alive():
+                        p.kill()  # Force kill if still alive
+
+            expected = num_processes * iterations * update_value
             if storage in ("simple", GateStorageType.simple):
                 assert gate.sum != expected
             else:
                 assert gate.sum == expected
         finally:
+            # Ensure all processes are cleaned up
+            for p in processes:
+                if p.is_alive():
+                    try:
+                        p.terminate()
+                        p.join(timeout=2)
+                        if p.is_alive():
+                            p.kill()
+                    except Exception:
+                        pass  # Ignore cleanup errors
             gate.clear()
 
 
@@ -148,12 +202,22 @@ class TestCallGateMultiprocessingExecutor:
     ):
         gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         multiprocessing.set_start_method(start_method, force=True)
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(process_worker, gate, num_updates, update_value) for _ in range(num_workers)]
-            for future in futures:
-                future.result()
-        expected = num_workers * num_updates * update_value
+
         try:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(process_worker, gate, num_updates, update_value) for _ in range(num_workers)]
+                # Wait for all futures with timeout and proper error handling
+                for i, future in enumerate(futures):
+                    try:
+                        future.result(timeout=30)  # 30 second timeout per future
+                    except Exception as e:
+                        # Cancel remaining futures if one fails
+                        for j, f in enumerate(futures):
+                            if j > i:  # Cancel futures that haven't started yet
+                                f.cancel()
+                        raise e
+
+            expected = num_workers * num_updates * update_value
             if storage in ("simple", GateStorageType.simple):
                 assert gate.sum != expected
             else:
@@ -172,12 +236,22 @@ class TestCallGateMultiprocessingExecutor:
     ):
         gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         multiprocessing.set_start_method(start_method, force=True)
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(worker_context, gate, num_updates, update_value) for _ in range(num_workers)]
-            for future in futures:
-                future.result()
-        expected = num_workers * num_updates * update_value
+
         try:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(worker_context, gate, num_updates, update_value) for _ in range(num_workers)]
+                # Wait for all futures with timeout and proper error handling
+                for i, future in enumerate(futures):
+                    try:
+                        future.result(timeout=30)  # 30 second timeout per future
+                    except Exception as e:
+                        # Cancel remaining futures if one fails
+                        for j, f in enumerate(futures):
+                            if j > i:  # Cancel futures that haven't started yet
+                                f.cancel()
+                        raise e
+
+            expected = num_workers * num_updates * update_value
             if storage in ("simple", GateStorageType.simple):
                 assert gate.sum != expected
             else:
@@ -196,12 +270,24 @@ class TestCallGateMultiprocessingExecutor:
     ):
         gate = create_call_gate(random_name(), gate_size=60, frame_step=1, storage=storage)
         multiprocessing.set_start_method(start_method, force=True)
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(worker_decorator, gate, num_updates, update_value) for _ in range(num_workers)]
-            for future in futures:
-                future.result()
-        expected = num_workers * num_updates * update_value
+
         try:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [
+                    executor.submit(worker_decorator, gate, num_updates, update_value) for _ in range(num_workers)
+                ]
+                # Wait for all futures with timeout and proper error handling
+                for i, future in enumerate(futures):
+                    try:
+                        future.result(timeout=30)  # 30 second timeout per future
+                    except Exception as e:
+                        # Cancel remaining futures if one fails
+                        for j, f in enumerate(futures):
+                            if j > i:  # Cancel futures that haven't started yet
+                                f.cancel()
+                        raise e
+
+            expected = num_workers * num_updates * update_value
             if storage in ("simple", GateStorageType.simple):
                 assert gate.sum != expected
             else:

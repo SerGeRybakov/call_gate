@@ -30,6 +30,7 @@ __all__ = [
     "CallGateBaseError",
     "CallGateImportError",
     "CallGateOverflowError",
+    "CallGateRedisConfigurationError",
     "CallGateTypeError",
     "CallGateValueError",
     "FrameLimitError",
@@ -51,6 +52,10 @@ class CallGateImportError(CallGateBaseError, ImportError):
 
 class CallGateValueError(CallGateBaseError, ValueError):
     """Value error."""
+
+
+class CallGateRedisConfigurationError(CallGateBaseError, ValueError):
+    """Redis configuration error, raised when Redis client configuration is invalid."""
 
 
 class CallGateTypeError(CallGateBaseError, TypeError):

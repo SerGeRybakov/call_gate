@@ -178,8 +178,8 @@ class TestTimestampPersistence:
             pytest.skip("Redis not available")
 
         try:
-            # Check that timestamp key is correctly formatted
-            expected_key = f"{gate_name}:timestamp"
+            # Check that timestamp key is correctly formatted with hash tags
+            expected_key = f"{{{gate_name}}}:timestamp"
             assert gate._data._timestamp == expected_key
 
             # Update gate to set timestamp

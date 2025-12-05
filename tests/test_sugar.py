@@ -54,25 +54,27 @@ class TestSugar:
         temp_dir = tmp_path / "file_tests"
         temp_file = temp_dir / f"{storage}_name.json"
         gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=30, storage=storage)
-        for _ in range(random.randint(5, 10)):
-            gate.update(value=random.randint(1, 5))
+        try:
+            for _ in range(random.randint(5, 10)):
+                gate.update(value=random.randint(1, 5))
 
-        storages_choices = ["simple", "shared", "redis"]
+            storages_choices = ["simple", "shared", "redis"]
 
-        state = gate.state
-        name = gate.name
-        old_current_dt = gate.current_dt
-        old_storage = gate.storage
+            state = gate.state
+            name = gate.name
+            old_current_dt = gate.current_dt
+            old_storage = gate.storage
 
-        if path_type == "str":
-            temp_file = str(temp_file.absolute().resolve())
+            if path_type == "str":
+                temp_file = str(temp_file.absolute().resolve())
 
-        gate.to_file(temp_file)
-        with open(temp_file) as f:
-            data = json.load(f)
-            assert len(data["_data"]) == gate.frames
-        gate.clear()
-        del gate
+            gate.to_file(temp_file)
+            with open(temp_file) as f:
+                data = json.load(f)
+                assert len(data["_data"]) == gate.frames
+        finally:
+            gate.clear()
+            del gate
 
         new_storage = random.choice(storages_choices)
         while new_storage == old_storage:
