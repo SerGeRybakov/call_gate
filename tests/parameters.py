@@ -4,19 +4,23 @@ import uuid
 import pytest
 
 from faker import Faker
+from redis import Redis
 
 from call_gate import CallGate, GateStorageType
+from tests.cluster.utils import ClusterManager
 
 
 GITHUB_ACTIONS_REDIS_TIMEOUT = int(os.getenv("GITHUB_ACTIONS_REDIS_TIMEOUT", "60"))
 
 github_actions = os.getenv("GITHUB_ACTIONS") == "true"
 xfail_marker = pytest.mark.xfail(reason="Timeout on Redis expected in GitHub Actions") if github_actions else []
+# Note: cluster_skip_marker removed - we now support Redis cluster in GitHub Actions via pfapi/redis-cluster-service
 
 storages = [
     "simple",
     "shared",
     pytest.param("redis", marks=xfail_marker),
+    "redis_cluster",  # Now supported in GitHub Actions
     GateStorageType.simple,
     GateStorageType.shared,
     pytest.param(GateStorageType.redis, marks=xfail_marker),
@@ -61,9 +65,11 @@ def get_redis_kwargs(db=None, **extra_kwargs):
 def create_call_gate(*args, storage=None, **kwargs):
     """Create CallGate with proper Redis configuration if needed.
 
-    Automatically adds Redis connection parameters when storage is Redis.
+    Automatically adds Redis connection parameters when storage is Redis or
+    Redis cluster.
     """
     if storage in ("redis", GateStorageType.redis):
+        # Regular Redis storage
         # Extract Redis-specific kwargs
         redis_db = kwargs.pop("redis_db", None)
         redis_extra = {
@@ -77,6 +83,19 @@ def create_call_gate(*args, storage=None, **kwargs):
         # Add Redis configuration
         redis_kwargs = get_redis_kwargs(db=redis_db, **redis_extra)
         kwargs.update(redis_kwargs)
+    elif storage == "redis_cluster":
+        # Redis cluster storage - create cluster client
+        # Try to get cluster client
+        manager = ClusterManager()
+        try:
+            cluster_client = manager.get_cluster_client()
+        except Exception as e:
+            # Cluster should be available both locally and in GitHub Actions now
+            raise ConnectionError(f"Redis cluster not available: {e}") from e
+
+        # Use GateStorageType.redis with cluster client
+        kwargs["redis_client"] = cluster_client
+        storage = GateStorageType.redis
 
     return CallGate(*args, storage=storage, **kwargs)
 
@@ -90,7 +109,5 @@ def create_redis_client(**extra_kwargs):
     Returns:
         Redis client instance
     """
-    from redis import Redis
-
     redis_kwargs = get_redis_kwargs(**extra_kwargs)
     return Redis(**redis_kwargs)

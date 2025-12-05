@@ -1,9 +1,9 @@
 """
 Shared in-memory storage implementation using multiprocessing shared memory.
 
-This storage is suitable for multiprocess applications. The storage uses a numpy
-array in shared memory to store the values of the gate. The array is divided into
-frames which are accessed by the index of the frame.
+This storage is suitable for multiprocess applications. The storage uses a
+multiprocessing Manager list in shared memory to store the values of the gate.
+The list is divided into frames which are accessed by the index of the frame.
 
 The storage is thread-safe and process-safe for multiple readers and writers.
 
@@ -29,9 +29,9 @@ if TYPE_CHECKING:
 class SharedMemoryStorage(BaseStorage):
     """Shared in-memory storage implementation using multiprocessing shared memory.
 
-    This storage is suitable for multiprocess applications. The storage uses a numpy
-    array in shared memory to store the values of the gate. The array is divided into
-    frames which are accessed by the index of the frame.
+    This storage is suitable for multiprocess applications. The storage uses a
+    multiprocessing Manager list in shared memory to store the values of the gate.
+    The list is divided into frames which are accessed by the index of the frame.
 
     The storage is thread-safe and process-safe for multiple readers and writers.
 

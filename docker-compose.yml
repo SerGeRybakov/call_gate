@@ -14,6 +14,7 @@ services:
 
   # Redis pseudo-cluster nodes for cluster testing
   redis-cluster-node-1:
+    container_name: call-gate-redis-cluster-node-1
     image: redis:latest
     command: [
       "redis-server",
@@ -21,8 +22,7 @@ services:
       "--port", "7001",
       "--cluster-enabled", "yes",
       "--cluster-config-file", "nodes-7001.conf",
-      "--cluster-node-timeout", "5000",
-      "--appendonly", "yes"
+      "--cluster-node-timeout", "5000"
     ]
     ports:
       - 7001:7001
@@ -34,6 +34,7 @@ services:
       retries: 5
 
   redis-cluster-node-2:
+    container_name: call-gate-redis-cluster-node-2
     image: redis:latest
     command: [
       "redis-server",
@@ -41,8 +42,7 @@ services:
       "--port", "7002",
       "--cluster-enabled", "yes",
       "--cluster-config-file", "nodes-7002.conf",
-      "--cluster-node-timeout", "5000",
-      "--appendonly", "yes"
+      "--cluster-node-timeout", "5000"
     ]
     ports:
       - 7002:7002
@@ -54,6 +54,7 @@ services:
       retries: 5
 
   redis-cluster-node-3:
+    container_name: call-gate-redis-cluster-node-3
     image: redis:latest
     command: [
       "redis-server",
@@ -61,8 +62,7 @@ services:
       "--port", "7003",
       "--cluster-enabled", "yes",
       "--cluster-config-file", "nodes-7003.conf",
-      "--cluster-node-timeout", "5000",
-      "--appendonly", "yes"
+      "--cluster-node-timeout", "5000"
     ]
     ports:
       - 7003:7003
@@ -75,6 +75,7 @@ services:
 
   # Redis cluster initialization service
   redis-cluster-init:
+    container_name: call-gate-redis-cluster-init
     image: redis:latest
     depends_on:
       - redis-cluster-node-1

@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 
@@ -47,13 +48,19 @@ class TestCallGateInThreadsManual:
             return 42
 
         threads = [threading.Thread(target=worker) for _ in range(num_threads)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        expected = num_threads * updates_per_thread * update_value
         try:
+            for t in threads:
+                t.start()
+
+            # Wait for threads with timeout
+            for t in threads:
+                t.join(timeout=30)  # 30 second timeout per thread
+                if t.is_alive():
+                    # Thread is still running after timeout - this shouldn't happen in normal cases
+                    # but we log it for debugging
+                    logging.warning(f"Thread {t.name} did not finish within timeout")
+
+            expected = num_threads * updates_per_thread * update_value
             assert gate.sum == expected
         finally:
             gate.clear()

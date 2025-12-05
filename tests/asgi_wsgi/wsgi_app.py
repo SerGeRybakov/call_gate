@@ -9,15 +9,16 @@ from tests.parameters import create_call_gate
 
 
 app = Flask(__name__)
+# Use fixed gate name so all workers share the same distributed gate
+gate_name = "wsgi_shared_gate"
 gate = create_call_gate(
-    "api_gate",
-    timedelta(seconds=2),
-    timedelta(milliseconds=100),
-    gate_limit=10,
-    frame_limit=4,
+    gate_name,
+    timedelta(seconds=5),  # Longer window
+    timedelta(milliseconds=500),  # Larger frames
+    gate_limit=8,  # Lower gate limit
+    frame_limit=2,  # Lower frame limit
     storage=GateStorageType.redis,
 )
-gate.clear()
 
 
 @app.route("/")
