@@ -160,7 +160,7 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
-          max_attempts: 3
+          max_attempts: 1
           retry_on: error
           command: |
             poetry run pytest --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/test_redis_cluster.py --ignore=tests/cluster/ ./tests

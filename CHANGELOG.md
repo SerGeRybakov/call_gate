@@ -84,6 +84,19 @@ gate = CallGate(
 )
 ```
 
+## [1.0.5] - 2025-11-27
+
+### Added
+- **Edge Case Testing**: Added comprehensive edge case tests for CallGate, Redis, and storage components
+- **Enhanced Test Coverage**: New test files for better coverage of corner cases and error scenarios
+
+### Fixed
+- **Test Infrastructure**: Improved test reliability and coverage reporting
+- **CI/CD Pipeline**: Enhanced GitHub Actions workflow for better test execution
+
+### Changed
+- **Test Organization**: Better organization of test files with dedicated edge case testing
+
 ## [1.0.4] - 2025-03-29
 
 ### Fixed
