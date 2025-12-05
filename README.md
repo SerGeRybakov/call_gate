@@ -187,7 +187,7 @@ The main disadvantage of these two storages - they are in-memory and do not pers
 
 The solution is ``redis`` storage, which is not just thread-safe and process-safe as well, but also distributable.
 You can easily use the same gate in multiple processes, even in separated Docker-containers connected 
-to the same Redis-server or Redis cluster.
+to the same Redis-server, Redis-sentinel or Redis-cluster.
 
 Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
@@ -446,6 +446,8 @@ if __name__ == "__main__":
     asyncio.run(async_dummy(gate))
 ```
 
+More minimal samples live in the [`examples/` directory](./examples).
+
 ## Remarkable Notes
 - The package is compatible with Python 3.9+.
 - Under `WSGI/ASGI applications` I mean the applications such as `gunicorn` or `uvicorn`. 
@@ -468,7 +470,7 @@ if __name__ == "__main__":
 - The majority of Redis calls is performed via 
 [Lua-scripts](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/), what makes them run 
 on the Redis-server side.
-- **Redis Cluster Support**: CallGate supports both single Redis instances and Redis clusters with automatic failover and recovery.
+- **Redis Support**: CallGate supports Redis standalone, sentinel, and cluster storages.
 - **Connection Validation**: Redis clients are validated with ping() during CallGate initialization to ensure connectivity.
 - The maximal value guaranteed for `in-memory` storages is `2**64 - 1`, but for Redis it is ``2**53 - 1``
 only because Redis uses [Lua 5.1](https://www.lua.org/manual/5.1/).  

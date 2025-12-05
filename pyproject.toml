@@ -150,6 +150,16 @@ ignore = [
   "S607",  # Starting process with partial path - acceptable when using system PATH
 ]
 
+"examples/**" = [
+  "B007",
+  "D100",
+  "D103",
+  "S101",
+  "S104",
+  "S201",
+  "S311",
+]
+
 # https://docs.astral.sh/ruff/settings/#lintpylint
 [tool.ruff.lint.pylint]
 max-args = 12
@@ -256,6 +266,7 @@ branch = true
 omit = [
   "*/__init__.py",
   "tests/*",
+  "examples/*",
   "tmp.py",
   "call_gate/typings.py"
 ]

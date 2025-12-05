@@ -1,0 +1,129 @@
+services:
+  redis:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--port", "6379", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  redis-cluster-node-1:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--port", "7001", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf"]
+    ports:
+      - "7001:7001"
+    restart: unless-stopped
+
+  redis-cluster-node-2:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--port", "7002", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf"]
+    ports:
+      - "7002:7002"
+    restart: unless-stopped
+
+  redis-cluster-node-3:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--port", "7003", "--cluster-enabled", "yes", "--cluster-config-file", "nodes.conf"]
+    ports:
+      - "7003:7003"
+    restart: unless-stopped
+
+  redis-cluster-init:
+    image: redis:7.2-alpine
+    depends_on:
+      - redis-cluster-node-1
+      - redis-cluster-node-2
+      - redis-cluster-node-3
+    entrypoint: >
+      sh -c "
+        sleep 5 &&
+        redis-cli -h redis-cluster-node-1 -p 7001 ping &&
+        redis-cli -h redis-cluster-node-2 -p 7002 ping &&
+        redis-cli -h redis-cluster-node-3 -p 7003 ping &&
+        yes yes | redis-cli --cluster create redis-cluster-node-1:7001 redis-cluster-node-2:7002 redis-cluster-node-3:7003 --cluster-replicas 0
+      "
+    restart: "no"
+
+  redis-sentinel-master:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--port", "6389"]
+    ports:
+      - "6389:6389"
+    restart: unless-stopped
+
+  redis-sentinel-slave:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--port", "6390", "--replicaof", "redis-sentinel-master", "6389"]
+    depends_on:
+      - redis-sentinel-master
+    ports:
+      - "6390:6390"
+    restart: unless-stopped
+
+  redis-sentinel-1:
+    image: redis:7.2-alpine
+    depends_on:
+      - redis-sentinel-master
+    command: >
+      sh -c "
+        until redis-cli -h redis-sentinel-master -p 6389 ping; do sleep 1; done;
+        MASTER_IP=$$(getent hosts redis-sentinel-master | awk '{print $$1}');
+        echo 'port 26379' > /tmp/sentinel.conf &&
+        echo \"sentinel monitor mymaster $$MASTER_IP 6389 1\" >> /tmp/sentinel.conf &&
+        echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
+        echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26379:26379"
+    restart: unless-stopped
+
+  redis-sentinel-2:
+    image: redis:7.2-alpine
+    depends_on:
+      - redis-sentinel-master
+    command: >
+      sh -c "
+        until redis-cli -h redis-sentinel-master -p 6389 ping; do sleep 1; done;
+        MASTER_IP=$$(getent hosts redis-sentinel-master | awk '{print $$1}');
+        echo 'port 26380' > /tmp/sentinel.conf &&
+        echo \"sentinel monitor mymaster $$MASTER_IP 6389 1\" >> /tmp/sentinel.conf &&
+        echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
+        echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26380:26380"
+    restart: unless-stopped
+
+  redis-sentinel-3:
+    image: redis:7.2-alpine
+    depends_on:
+      - redis-sentinel-master
+    command: >
+      sh -c "
+        until redis-cli -h redis-sentinel-master -p 6389 ping; do sleep 1; done;
+        MASTER_IP=$$(getent hosts redis-sentinel-master | awk '{print $$1}');
+        echo 'port 26381' > /tmp/sentinel.conf &&
+        echo \"sentinel monitor mymaster $$MASTER_IP 6389 1\" >> /tmp/sentinel.conf &&
+        echo 'sentinel down-after-milliseconds mymaster 5000' >> /tmp/sentinel.conf &&
+        echo 'sentinel failover-timeout mymaster 10000' >> /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26381:26381"
+    restart: unless-stopped
+
+  redis-sentinel-init:
+    image: redis:7.2-alpine
+    depends_on:
+      - redis-sentinel-1
+      - redis-sentinel-2
+      - redis-sentinel-3
+    entrypoint: >
+      sh -c "
+        sleep 8 &&
+        redis-cli -h redis-sentinel-1 -p 26379 ping &&
+        redis-cli -h redis-sentinel-1 -p 26379 sentinel masters &&
+        redis-cli -h redis-sentinel-1 -p 26379 sentinel get-master-addr-by-name mymaster
+      "
+    restart: "no"
