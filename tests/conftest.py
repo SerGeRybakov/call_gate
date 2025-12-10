@@ -1,5 +1,6 @@
 import faulthandler
-import os
+import signal
+import sys
 
 from datetime import timedelta
 
@@ -30,10 +31,28 @@ def _cleanup_redis_db():
 
     try:
         r = create_redis_client()
-        # Use FLUSHDB to completely clear the database - much faster than keys + delete
+
+        # First, try to delete any stuck locks (prevent deadlocks)
+        try:
+            for key in r.scan_iter(match="*:lock*"):
+                r.delete(key)
+        except Exception:
+            pass
+
+        # Use FLUSHDB to completely clear the database
         r.flushdb()
-        # Also ensure any remaining connections are closed
-        r.connection_pool.disconnect()
+
+        # Force close all connections to prevent stale connections
+        try:
+            r.connection_pool.disconnect()
+        except Exception:
+            pass
+
+        # Close the client itself
+        try:
+            r.close()
+        except Exception:
+            pass
     except (redis.ConnectionError, redis.TimeoutError, redis.ResponseError):
         # Redis not available or error occurred, skip cleanup
         pass
@@ -41,16 +60,22 @@ def _cleanup_redis_db():
 
 def _cleanup_redis_cluster():
     """Clean Redis cluster thoroughly."""
-    # Skip cluster cleanup in GitHub Actions - no cluster available
-    if os.getenv("GITHUB_ACTIONS") == "true":
-        return
-
     try:
         cluster_client = create_redis_cluster_client()
         # Use FLUSHALL to clear all databases on all nodes
         cluster_client.flushall()
-        # Close connections
-        cluster_client.connection_pool.disconnect()
+
+        # Force close all connections
+        try:
+            cluster_client.connection_pool.disconnect()
+        except Exception:
+            pass
+
+        # Close the client itself
+        try:
+            cluster_client.close()
+        except Exception:
+            pass
     except Exception:
         # Cluster not available or error occurred, skip cleanup
         pass
@@ -66,6 +91,17 @@ def pytest_sessionstart(session):
     """Enable faulthandler and make a stack dump if tests are stuck."""
     faulthandler.enable()
     faulthandler.dump_traceback_later(60)
+
+    # Register SIGSEGV handler to fail tests explicitly
+    def segfault_handler(signum, frame):
+        print("\n" + "=" * 70)
+        print("CRITICAL: SIGSEGV (Segmentation Fault) detected!")
+        print("=" * 70)
+        faulthandler.dump_traceback()
+        # Force exit with error code
+        sys.exit(139)  # 128 + 11 (SIGSEGV signal number)
+
+    signal.signal(signal.SIGSEGV, segfault_handler)
 
     # Clean all Redis instances at the start of test session
     _cleanup_all_redis()

@@ -223,6 +223,8 @@ class CallGate:
         timezone: str = Sentinel,
         storage: GateStorageModeType = GateStorageType.simple,
         redis_client: Optional[Union[Redis, RedisCluster]] = None,
+        redis_lock_timeout: int = 5,
+        redis_lock_blocking_timeout: int = 5,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
     ) -> None:
@@ -271,6 +273,8 @@ class CallGate:
             # Add redis_client for Redis storage (Redis uses its own locks, not manager)
             if redis_client is not None:
                 storage_kw["client"] = redis_client
+                storage_kw["lock_timeout"] = redis_lock_timeout
+                storage_kw["lock_blocking_timeout"] = redis_lock_blocking_timeout
 
         else:  # no cov
             raise storage_err

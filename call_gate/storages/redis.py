@@ -99,8 +99,13 @@ class RedisStorage(BaseStorage):
 
     def _create_locks(self) -> None:
         """Create Redis locks for this storage instance."""
-        self._lock = self._client.lock(f"{{{self.name}}}:lock", blocking=True, timeout=1, blocking_timeout=1)
-        self._rlock = RedisReentrantLock(self._client, f"{{{self.name}}}")
+        self._lock = self._client.lock(
+            f"{{{self.name}}}:lock",
+            blocking=True,
+            timeout=self._lock_timeout,
+            blocking_timeout=self._lock_blocking_timeout,
+        )
+        self._rlock = RedisReentrantLock(self._client, f"{{{self.name}}}", timeout=self._lock_timeout)
 
     def __init__(
         self,
@@ -109,6 +114,8 @@ class RedisStorage(BaseStorage):
         *,
         data: Optional[list[int]] = None,
         client: Optional[Union[Redis, RedisCluster]] = None,
+        lock_timeout: int = 5,
+        lock_blocking_timeout: int = 5,
     ) -> None:
         """Initialize the RedisStorage.
 
@@ -116,6 +123,8 @@ class RedisStorage(BaseStorage):
         """
         self.name = name
         self.capacity = capacity
+        self._lock_timeout = lock_timeout
+        self._lock_blocking_timeout = lock_blocking_timeout
 
         # client can be None during unpickling - will be restored in __setstate__
         if client is not None:
@@ -232,12 +241,6 @@ class RedisStorage(BaseStorage):
                 else:
                     args = [str(self.capacity)]
                 self._client.eval(lua_script, 2, self._data, self._sum, *args)
-
-    def __del__(self) -> None:
-        try:
-            self._client.close()
-        except Exception:  # noqa: S110
-            pass
 
     def _is_serializable_and_add(self, key: str, value: Any, target_params: set, found_params: dict) -> bool:
         """Check if value is serializable and add to found_params if key matches target_params."""
