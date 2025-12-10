@@ -99,6 +99,12 @@ class SimpleStorage(BaseStorage):
                 lst = list(self._data)
                 return State(data=lst, sum=int(sum(lst)))
 
+    def _clear_unlocked(self) -> None:
+        """Clear storage data (caller must hold locks)."""
+        self._data = self.__get_clear_deque()
+        self._sum = 0
+        self._timestamp = None
+
     def slide(self, n: int) -> None:
         """Slide storage data to the right by n frames.
 
@@ -110,7 +116,7 @@ class SimpleStorage(BaseStorage):
             if n < 1:
                 raise CallGateValueError("Value must be >= 1.")
             if n >= self.capacity:
-                self.clear()
+                self._clear_unlocked()
             self._data.extendleft([0] * n)
 
     def as_list(self) -> list:
@@ -123,9 +129,7 @@ class SimpleStorage(BaseStorage):
         """Clear the data contents (resets all values to 0)."""
         with self._rlock:
             with self._lock:
-                self._data = self.__get_clear_deque()
-                self._sum = 0
-                self._timestamp = None
+                self._clear_unlocked()
 
     def atomic_update(self, value: int, frame_limit: int, gate_limit: int) -> None:
         """Atomically update the value of the most recent frame and the storage sum.

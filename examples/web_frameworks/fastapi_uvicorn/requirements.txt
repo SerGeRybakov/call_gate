@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+call_gate
+httpx

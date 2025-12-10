@@ -13,18 +13,12 @@ from datetime import datetime
 from enum import IntEnum, auto
 from multiprocessing.shared_memory import ShareableList
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Protocol, Union
+from typing import Any, NamedTuple, Optional, Protocol, Union
 
 from typing_extensions import Literal
 
 
 Sentinel = object()
-
-if TYPE_CHECKING:
-    try:
-        from numpy.typing import NDArray
-    except ImportError:
-        NDArray = Sentinel
 
 
 class CallGateLimits(NamedTuple):
@@ -99,5 +93,5 @@ class AsyncLockProtocol(Protocol):  # noqa: D101
 
 
 LockType = Union[LockProtocol, AsyncLockProtocol]
-StorageType = Union[MutableSequence, ShareableList, "NDArray", str]
+StorageType = Union[MutableSequence, ShareableList, str]
 GateStorageModeType = Union[GateStorageType, Literal["simple", "shared", "redis"]]

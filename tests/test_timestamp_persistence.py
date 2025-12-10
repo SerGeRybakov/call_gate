@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from call_gate import CallGate, GateStorageType
+from call_gate import GateStorageType
 from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
@@ -22,7 +22,7 @@ class TestTimestampPersistence:
     @pytest.mark.parametrize("storage", storages)
     def test_timestamp_set_and_get(self, storage):
         """Test basic timestamp set and get operations."""
-        gate = CallGate(random_name(), 60, 1, storage=storage)
+        gate = create_call_gate(random_name(), 60, 1, storage=storage)
         try:
             # Initially no timestamp
             assert gate._data.get_timestamp() is None
@@ -45,7 +45,7 @@ class TestTimestampPersistence:
     @pytest.mark.parametrize("storage", storages)
     def test_timestamp_clear(self, storage):
         """Test timestamp clearing functionality."""
-        gate = CallGate(random_name(), 60, 1, storage=storage)
+        gate = create_call_gate(random_name(), 60, 1, storage=storage)
         try:
             # Set a timestamp
             test_time = datetime.now()
@@ -62,7 +62,7 @@ class TestTimestampPersistence:
     @pytest.mark.parametrize("storage", storages)
     def test_timestamp_updated_on_update(self, storage):
         """Test that timestamp is updated when gate is updated."""
-        gate = CallGate(random_name(), 60, 1, storage=storage)
+        gate = create_call_gate(random_name(), 60, 1, storage=storage)
         try:
             # Initially no timestamp
             assert gate._data.get_timestamp() is None
@@ -84,7 +84,7 @@ class TestTimestampPersistence:
     @pytest.mark.parametrize("storage", storages)
     def test_timestamp_cleared_on_clear(self, storage):
         """Test that timestamp is cleared when gate is cleared."""
-        gate = CallGate(random_name(), 60, 1, storage=storage)
+        gate = create_call_gate(random_name(), 60, 1, storage=storage)
         try:
             # Update to set timestamp
             gate.update(5)
@@ -105,14 +105,14 @@ class TestTimestampPersistence:
         gate_name = random_name()
 
         # Create first gate and update it
-        gate1 = CallGate(gate_name, 60, 1, storage=storage)
+        gate1 = create_call_gate(gate_name, 60, 1, storage=storage)
         try:
             gate1.update(10)
             stored_timestamp = gate1._data.get_timestamp()
             assert stored_timestamp is not None
 
             # Create second gate with same name
-            gate2 = CallGate(gate_name, 60, 1, storage=storage)
+            gate2 = create_call_gate(gate_name, 60, 1, storage=storage)
             try:
                 # Should restore timestamp from storage
                 restored_timestamp = gate2._current_dt
@@ -138,7 +138,7 @@ class TestTimestampPersistence:
         gate_name = random_name()
 
         # Create first gate and add some data
-        gate1 = CallGate(gate_name, timedelta(minutes=10), timedelta(seconds=1), storage=storage)
+        gate1 = create_call_gate(gate_name, timedelta(minutes=10), timedelta(seconds=1), storage=storage)
         try:
             # Add data to multiple frames
             for i in range(5):
@@ -151,7 +151,7 @@ class TestTimestampPersistence:
 
             # Create second gate with same name after a short delay
             time.sleep(0.1)  # 100ms delay
-            gate2 = CallGate(gate_name, timedelta(minutes=10), timedelta(seconds=1), storage=storage)
+            gate2 = create_call_gate(gate_name, timedelta(minutes=10), timedelta(seconds=1), storage=storage)
             try:
                 if storage in ("simple", GateStorageType.simple, "shared", GateStorageType.shared):
                     # Simple and Shared storage start fresh with separate instances
@@ -170,16 +170,12 @@ class TestTimestampPersistence:
 
     def test_redis_timestamp_key_format(self):
         """Test that Redis storage uses correct timestamp key format."""
-        try:
-            # Try to create a Redis gate to test if Redis is available
-            gate_name = random_name()
-            gate = create_call_gate(gate_name, 60, 1, storage="redis")
-        except Exception:
-            pytest.skip("Redis not available")
+        gate_name = random_name()
+        gate = create_call_gate(gate_name, 60, 1, storage="redis")
 
         try:
-            # Check that timestamp key is correctly formatted
-            expected_key = f"{gate_name}:timestamp"
+            # Check that timestamp key is correctly formatted with hash tags
+            expected_key = f"{{{gate_name}}}:timestamp"
             assert gate._data._timestamp == expected_key
 
             # Update gate to set timestamp
@@ -204,7 +200,7 @@ class TestTimestampPersistence:
         gate_name = random_name()
 
         # Simulate first service running for a while
-        service1 = CallGate(gate_name, timedelta(hours=1), timedelta(minutes=1), storage=storage)
+        service1 = create_call_gate(gate_name, timedelta(hours=1), timedelta(minutes=1), storage=storage)
         try:
             # Add data over several minutes (simulated)
             for i in range(10):
@@ -216,7 +212,7 @@ class TestTimestampPersistence:
 
             # Simulate service restart after a few minutes
             # (much less than 1 hour window)
-            service2 = CallGate(gate_name, timedelta(hours=1), timedelta(minutes=1), storage=storage)
+            service2 = create_call_gate(gate_name, timedelta(hours=1), timedelta(minutes=1), storage=storage)
             try:
                 # Data should be preserved (no clearing due to timestamp restoration)
                 assert service2.sum == original_sum
@@ -230,3 +226,7 @@ class TestTimestampPersistence:
                 service2.clear()
         finally:
             service1.clear()
+
+
+if __name__ == "__main__":
+    pytest.main()

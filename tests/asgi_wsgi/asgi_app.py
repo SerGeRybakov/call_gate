@@ -7,8 +7,9 @@ from call_gate import GateStorageType
 from tests.parameters import create_call_gate
 
 
+# Use fixed gate name so all workers share the same distributed gate
 gate = create_call_gate(
-    "api_gate",
+    "asgi_shared_gate",
     timedelta(seconds=2),
     timedelta(milliseconds=100),
     gate_limit=10,
@@ -19,10 +20,11 @@ gate = create_call_gate(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await gate.clear()
+    # Don't clear gate at startup - let workers share the distributed state
     try:
         yield
     finally:
+        # Only clear at shutdown to clean up
         await gate.clear()
 
 

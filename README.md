@@ -11,12 +11,23 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/call_gate.svg)](https://pypi.org/project/call_gate/)
 [![License](https://img.shields.io/pypi/l/ansicolortags.svg)](https://pypi.python.org/pypi/ansicolortags/)
-[![Python Versions](https://img.shields.io/badge/Python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
+[![Python Versions](https://img.shields.io/badge/Python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](https://www.python.org/)
 
 [![Open Source Love](https://badges.frapsoft.com/os/v1/open-source.svg?v=103)](https://github.com/ellerbrock/open-source-badges/) 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 
 </div>
+
+---
+
+> ## ⚠️ **IMPORTANT: v2.0.0 Breaking Changes**
+> 
+> **If you're upgrading from v1.x with Redis storage**, you MUST migrate your data.  
+> Redis keys format has changed and old data will be **inaccessible** without migration.
+>
+> 👉 **[See Migration Guide](#️-migration-guide-v1x--v2x)** for step-by-step instructions.
+
+---
 
 ## Overview
 
@@ -187,7 +198,7 @@ The main disadvantage of these two storages - they are in-memory and do not pers
 
 The solution is ``redis`` storage, which is not just thread-safe and process-safe as well, but also distributable.
 You can easily use the same gate in multiple processes, even in separated Docker-containers connected 
-to the same Redis-server.
+to the same Redis-server, Redis-sentinel or Redis-cluster.
 
 Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
@@ -206,30 +217,112 @@ Coroutine safety is ensured for all of them by the main class: ``CallGate``.
   hypercorn myapp:app --config hypercorn.toml --workers 4
   ```
 
-If you are using a remote Redis-server, just pass the 
-[client parameters](https://redis-py.readthedocs.io/en/stable/connections.html) to the `CallGate` constructor `kwargs`:
+### Redis Configuration
+
+Use pre-initialized Redis client:
 
 ```python
+from redis import Redis
+
+client = Redis(
+    host="10.0.0.1",
+    port=16379,
+    db=0,
+    password="secret",
+    decode_responses=True,  # Required
+    socket_timeout=5,
+    socket_connect_timeout=5
+)
+
 gate = CallGate(
     "my_gate", 
     timedelta(seconds=10), 
     timedelta(seconds=1), 
     storage=GateStorageType.redis,
-    host="10.0.0.1",
-    port=16379,
-    db=0,
-    password="secret",
-    ...
-) 
+    redis_client=client
+)
 ```
-The default parameters are: 
-- `host`: `"localhost"`
-- `port`: `6379`, 
-- `db`: `15`, 
-- `password`: `None`.
 
-Also, be noted that the client decodes the Redis-server responses by default. It can not be changed - the 
-`decode_responses` parameter is ignored.
+**Redis Cluster support:**
+
+```python
+from redis import RedisCluster
+from redis.cluster import ClusterNode
+
+cluster_client = RedisCluster(
+    startup_nodes=[
+        ClusterNode("node1", 7001),
+        ClusterNode("node2", 7002), 
+        ClusterNode("node3", 7003)
+    ],
+    decode_responses=True,  # Required
+    skip_full_coverage_check=True,
+    socket_timeout=5,
+    socket_connect_timeout=5
+)
+
+gate = CallGate(
+    "my_gate", 
+    timedelta(seconds=10), 
+    timedelta(seconds=1), 
+    storage=GateStorageType.redis,
+    redis_client=cluster_client
+)
+```
+
+**Important notes:**
+- `decode_responses=True` is highly recommended for proper operation
+- Connection timeouts are recommended to prevent hanging operations
+- Redis client validation (ping) is performed during CallGate initialization
+
+---
+
+## ⚠️ MIGRATION GUIDE v1.x → v2.x
+
+### BREAKING CHANGES SUMMARY:
+1. Due to Redis Cluster support, Redis keys format changed - **old v1.x data is incompatible** with v2.x
+2. Redis storage requires pre-initialized `redis_client` parameter (removed `**kwargs` support)
+3. `CallGate.from_file()` requires `redis_client` for Redis storage
+
+---
+
+### Data Migration for Redis Storage
+
+**Redis keys format has changed** - old v1.x data will NOT be accessible in v2.x
+
+**Step 1: Export data using v1.x and Python REPL**
+```python
+# Using CallGate v1.x
+>>> from call_gate import CallGate
+>>> redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+>>> gate = CallGate("my_gate", 60, 1, storage="redis", **redis_kwargs)
+>>> gate.to_file("gate_backup.json")
+```
+
+**Step 2: Upgrade call-gate version**
+```shell
+pip install call-gate --upgrade
+```
+
+**Step 3: Import data using v2.x and Python REPL**
+```python
+# Using CallGate v2.x
+>>> from call_gate import CallGate
+>>> from redis import Redis
+>>> redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+>>> client = Redis(**redis_kwargs, decode_responses=True)
+>>> gate = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client) # Data is automatically written to Redis with new key format
+>>> gate.state
+```
+
+> It's not recommended to insert `step 3` into your business logic as it will rewrite your actual data from the file contents on each restart.
+
+**Why keys changed:**
+- v1.x keys: `gate_name`, `gate_name:sum`, `gate_name:timestamp`
+- v2.x keys: `{gate_name}`, `{gate_name}:sum`, `{gate_name}:timestamp`
+- Hash tags `{...}` ensure all keys for one gate are in the same Redis Cluster slot
+
+---
 
 ### Use Directly
 
@@ -301,12 +394,13 @@ The package provides a pack of custom exceptions. Basically, you may be interest
 - `ThrottlingError` - a base limit error, raised when rate limits are reached or violated.
 - `FrameLimitError` - (derives from `ThrottlingError`) a limit error, raised when frame limit is reached or violated. 
 - `GateLimitError` - (derives from `ThrottlingError`) a limit error, raised when gate limit is reached or violated.
+- `CallGateRedisConfigurationError` - raised when Redis client configuration is invalid.
 
 These errors are handled automatically by the library, but you may also choose to throw them explicitly by switching
 the `throw` parameter to `True`
 
 ```python
-from call_gate import FrameLimitError, GateLimitError, ThrottlingError
+from call_gate import FrameLimitError, GateLimitError, ThrottlingError, CallGateRedisConfigurationError
 
 while True:
     try:
@@ -315,6 +409,8 @@ while True:
         print(f"Frame limit exceeded! {e}")
     except GateLimitError as e:
         print(f"Gate limit exceeded! {e}")
+    except CallGateRedisConfigurationError as e:
+        print(f"Redis configuration error! {e}")
         
     # or
     
@@ -330,8 +426,20 @@ If you need to persist the state of the gate between restarts, you can use the `
 
 To restore the state you can use the `restored = CallGate.from_file({file_path})` method.  
 
-If you wish to restore the state using another storage type, you can pass the desired type as a keyword parameter to 
-`restored = CallGate.from_metadata({file_path}, storage={storage_type})`method.
+**For Redis storage**, you must provide `redis_client` parameter:
+
+```python
+from redis import Redis
+
+client = Redis(host="localhost", port=6379, db=15, decode_responses=True)
+restored = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client)
+```
+
+If you wish to restore the state using another storage type, you can pass the desired type as a keyword parameter:
+
+```python
+restored = CallGate.from_file("gate_backup.json", storage="simple")  # No redis_client needed
+```
 
 Redis persists the gate's state automatically until you restart its container without having shared volumes or clear 
 the Redis database. But still you can save its state to the file and to restore it as well.
@@ -394,6 +502,8 @@ if __name__ == "__main__":
     asyncio.run(async_dummy(gate))
 ```
 
+More minimal samples live in the [`examples/` directory](./examples).
+
 ## Remarkable Notes
 - The package is compatible with Python 3.9+.
 - Under `WSGI/ASGI applications` I mean the applications such as `gunicorn` or `uvicorn`. 
@@ -416,6 +526,8 @@ if __name__ == "__main__":
 - The majority of Redis calls is performed via 
 [Lua-scripts](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/), what makes them run 
 on the Redis-server side.
+- **Redis Support**: CallGate supports Redis standalone, sentinel, and cluster storages.
+- **Connection Validation**: Redis clients are validated with ping() during CallGate initialization to ensure connectivity.
 - The maximal value guaranteed for `in-memory` storages is `2**64 - 1`, but for Redis it is ``2**53 - 1``
 only because Redis uses [Lua 5.1](https://www.lua.org/manual/5.1/).  
 Lua 5.1 works with numbers as `double64` bit floating point numbers in 

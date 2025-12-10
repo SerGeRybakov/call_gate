@@ -13,16 +13,19 @@ The storage supports persistence of the gate values. When the application is res
 the gate values are not lost.
 """
 
+import inspect
+import pickle
 import time
 import uuid
+import warnings
 
 from datetime import datetime
 from threading import get_ident
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
-from redis import Redis, ResponseError
-from typing_extensions import Unpack
+from redis import Redis, RedisCluster, ResponseError
+from redis.cluster import ClusterNode
 
 from call_gate import FrameLimitError, GateLimitError
 from call_gate.errors import CallGateValueError, FrameOverflowError, GateOverflowError
@@ -38,7 +41,7 @@ class RedisReentrantLock:
     :param timeout: Lock lifespan in seconds.
     """
 
-    def __init__(self, client: Redis, name: str, timeout: int = 1) -> None:
+    def __init__(self, client: Union[Redis, RedisCluster], name: str, timeout: int = 1) -> None:
         self.client = client
         self.lock_key = f"{name}:global_lock"
         self.owner_key = f"{name}:lock_owner"
@@ -79,50 +82,68 @@ class RedisReentrantLock:
 
 
 class RedisStorage(BaseStorage):
-    """Redis-based storage.
+    """Redis-based storage supporting both single Redis and Redis cluster.
 
-    This module contains a storage implementation using Redis as the storage engine.
-
-    The storage is suitable for distributed applications. The storage uses a Redis list to store
-    the gate values. The Redis list is divided into frames which are accessed by the index of
-    the frame.
+    This storage implementation uses Redis as the storage engine and is suitable
+    for distributed applications. The storage uses a Redis list to store the gate
+    values divided into frames accessed by index.
 
     The storage is thread-safe and process-safe for multiple readers and writers.
-
-    The storage supports persistence of the gate values. When the application is restarted,
-    the gate values are not lost.
+    The storage supports persistence of gate values across application restarts.
 
     :param name: The name of the gate.
     :param capacity: The maximum number of values that the storage can store.
     :param data: Optional initial data for the storage.
+    :param client: Pre-initialized Redis or RedisCluster client (recommended).
     """
 
+    def _create_locks(self) -> None:
+        """Create Redis locks for this storage instance."""
+        self._lock = self._client.lock(
+            f"{{{self.name}}}:lock",
+            blocking=True,
+            timeout=self._lock_timeout,
+            blocking_timeout=self._lock_blocking_timeout,
+        )
+        self._rlock = RedisReentrantLock(self._client, f"{{{self.name}}}", timeout=self._lock_timeout)
+
     def __init__(
-        self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
+        self,
+        name: str,
+        capacity: int,
+        *,
+        data: Optional[list[int]] = None,
+        client: Optional[Union[Redis, RedisCluster]] = None,
+        lock_timeout: int = 5,
+        lock_blocking_timeout: int = 5,
     ) -> None:
-        """Initialize the RedisStorage."""
+        """Initialize the RedisStorage.
+
+        Note: client can be None during unpickling - it will be restored via __setstate__.
+        """
         self.name = name
         self.capacity = capacity
-        # Save the connection parameters for subsequent restoration
-        self._redis_kwargs = kwargs.copy()
-        self._redis_kwargs.pop("manager", None)
-        self._redis_kwargs.pop("decode_responses", None)
-        self._redis_kwargs["decode_responses"] = True
-        if "db" not in self._redis_kwargs:
-            self._redis_kwargs["db"] = 15
+        self._lock_timeout = lock_timeout
+        self._lock_blocking_timeout = lock_blocking_timeout
 
-        # Add socket timeouts to prevent hanging on Redis operations
-        if "socket_timeout" not in self._redis_kwargs:
-            self._redis_kwargs["socket_timeout"] = 5.0
-        if "socket_connect_timeout" not in self._redis_kwargs:
-            self._redis_kwargs["socket_connect_timeout"] = 5.0
+        # client can be None during unpickling - will be restored in __setstate__
+        if client is not None:
+            self._client: Union[Redis, RedisCluster] = client
+        else:
+            # This path is used during unpickling - _client will be set by __setstate__
+            self._client = None  # type: ignore[assignment]
 
-        self._client: Redis = Redis(**self._redis_kwargs)
-        self._data: str = self.name  # Redis key for the list
-        self._sum: str = f"{self.name}:sum"  # Redis key for the sum
-        self._timestamp: str = f"{self.name}:timestamp"  # Redis key for the timestamp
-        self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
-        self._rlock = RedisReentrantLock(self._client, self.name)
+        # Use hash tags to ensure all keys for this gate are in the same cluster slot
+        self._data: str = f"{{{self.name}}}"  # Redis key for the list
+        self._sum: str = f"{{{self.name}}}:sum"  # Redis key for the sum
+        self._timestamp: str = f"{{{self.name}}}:timestamp"  # Redis key for the timestamp
+
+        # Skip initialization if client is None (happens during unpickling)
+        # Everything will be restored via __setstate__
+        if self._client is None:
+            return
+
+        self._create_locks()
 
         # Lua script for initialization: sets the list and computes the sum.
         lua_script = """
@@ -222,10 +243,191 @@ class RedisStorage(BaseStorage):
                 self._client.eval(lua_script, 2, self._data, self._sum, *args)
 
     def __del__(self) -> None:
+        """Cleanup on deletion - close Redis client."""
+        self.close()
+
+    def close(self) -> None:
+        """Close Redis client connection explicitly."""
+        if hasattr(self, "_client") and self._client is not None:
+            try:
+                self._client.close()
+            except Exception:  # noqa: S110
+                pass
+
+    def _is_serializable_and_add(self, key: str, value: Any, target_params: set, found_params: dict) -> bool:
+        """Check if value is serializable and add to found_params if key matches target_params."""
+        if key in target_params and key not in found_params:
+            try:
+                pickle.dumps(value)
+                found_params[key] = value
+                return True
+            except (TypeError, pickle.PicklingError):
+                pass
+        return False
+
+    def _can_recurse_into(self, value: Any) -> bool:
+        """Check if we can recurse into this value."""
+        # Support objects with __dict__, dicts, lists, and tuples
+        is_container = hasattr(value, "__dict__") or isinstance(value, (dict, list, tuple))
+        is_primitive = isinstance(value, (str, int, float, bool, type(None)))
+
+        return is_container and not is_primitive
+
+    def _merge_nested_params(self, nested_params: dict, found_params: dict) -> None:
+        """Merge nested parameters into found_params, avoiding duplicates."""
+        for k, v in nested_params.items():
+            if k not in found_params:
+                found_params[k] = v
+
+    def _process_connection_kwargs(self, obj: Any, target_params: set, found_params: dict) -> None:
+        """Process special connection_kwargs attribute."""
+        if not hasattr(obj, "connection_kwargs"):
+            return
+
+        kwargs = getattr(obj, "connection_kwargs", {})
+        if hasattr(kwargs, "items"):  # Check if it's a dict
+            for key, value in kwargs.items():
+                self._is_serializable_and_add(key, value, target_params, found_params)
+
+    def _extract_constructor_params(
+        self, obj: Any, target_params: set, visited: Optional[set] = None
+    ) -> dict[str, Any]:
+        """Recursively extract constructor parameters from Redis client object."""
+        if visited is None:
+            visited = set()
+
+        # Avoid circular references
+        obj_id = id(obj)
+        if obj_id in visited:
+            return {}
+        visited.add(obj_id)
+
+        found_params: dict[str, Any] = {}
+
         try:
-            self._client.close()
-        except Exception:  # noqa: S110
+            self._process_object_dict(obj, target_params, visited, found_params)
+            self._process_connection_kwargs(obj, target_params, found_params)
+        except (AttributeError, TypeError):
+            # Skip objects that don't support attribute access or have incompatible types
             pass
+
+        return found_params
+
+    def _extract_and_merge_params(self, obj: Any, target_params: set, visited: set, found_params: dict) -> None:
+        """Extract constructor parameters from object and merge them into found_params."""
+        nested_params = self._extract_constructor_params(obj, target_params, visited)
+        self._merge_nested_params(nested_params, found_params)
+
+    def _process_object_dict(self, obj: Any, target_params: set, visited: set, found_params: dict) -> None:
+        """Process object's __dict__ attributes."""
+        if not hasattr(obj, "__dict__"):
+            return
+
+        obj_dict = getattr(obj, "__dict__", {})
+        for key, value in obj_dict.items():
+            self._process_attribute(key, value, target_params, visited, found_params)
+
+    def _process_dict_value(self, value_dict: dict, target_params: set, visited: set, found_params: dict) -> None:
+        """Process dictionary values for parameter extraction."""
+        for dict_key, dict_value in value_dict.items():
+            # Try to add as direct parameter match
+            if self._is_serializable_and_add(dict_key, dict_value, target_params, found_params):
+                continue
+            # Recurse into nested objects within the dictionary
+            if self._can_recurse_into(dict_value):
+                self._extract_and_merge_params(dict_value, target_params, visited, found_params)
+
+    def _process_list_value(
+        self, key: str, value_list: Union[list, tuple], target_params: set, visited: set, found_params: dict
+    ) -> None:
+        """Process list/tuple values by extracting data from each element.
+
+        Special handling for lists like startup_nodes that contain complex objects.
+        """
+        if key not in target_params:
+            return
+
+        serialized_items = []
+        for item in value_list:
+            if self._can_recurse_into(item):
+                # Extract parameters from complex object
+                item_params = self._extract_constructor_params(item, {"host", "port"}, visited)
+                if item_params:
+                    serialized_items.append(item_params)
+            else:
+                # Try to serialize primitive item directly
+                try:
+                    pickle.dumps(item)
+                    serialized_items.append(item)
+                except (TypeError, pickle.PicklingError):
+                    pass
+
+        if serialized_items:
+            found_params[key] = serialized_items
+
+    def _process_attribute(self, key: str, value: Any, target_params: set, visited: set, found_params: dict) -> None:
+        """Process a single attribute from object's __dict__."""
+        # Check for direct parameter matches first
+        if self._is_serializable_and_add(key, value, target_params, found_params):
+            return
+
+        # Skip if can't recurse or is private
+        if not self._can_recurse_into(value) or key.startswith("_"):
+            return
+
+        # If this is a target parameter that wasn't serializable
+        # Try special handling for lists/tuples, otherwise skip
+        if key in target_params:
+            if isinstance(value, (list, tuple)):
+                self._process_list_value(key, value, target_params, visited, found_params)
+            return
+
+        # For non-target parameters: recurse into containers to find target params
+        if isinstance(value, dict):
+            self._process_dict_value(value, target_params, visited, found_params)
+        else:
+            self._extract_and_merge_params(value, target_params, visited, found_params)
+
+    def _extract_client_state(self) -> dict[str, Any]:
+        """Extract client constructor parameters for serialization."""
+        client_type = "cluster" if isinstance(self._client, RedisCluster) else "redis"
+
+        # Get constructor signature from the client's class
+        sig = inspect.signature(self._client.__class__.__init__)
+        valid_params = set(sig.parameters.keys()) - {"self", "connection_pool"}
+
+        # Extract constructor parameters recursively
+        constructor_params = self._extract_constructor_params(self._client, valid_params)
+
+        return {"client_type": client_type, "client_state": constructor_params}
+
+    @staticmethod
+    def _restore_client_from_state(client_type: str, client_state: dict[str, Any]) -> Union[Redis, RedisCluster]:
+        """Restore Redis client from serialized state."""
+        if client_type == "cluster":
+            obj = RedisCluster
+            # Extract constructor parameters from state
+            kwargs = {k: v for k, v in client_state.items() if k not in ["startup_nodes"] and v is not None}
+
+            if startup_nodes_data := client_state.get("startup_nodes"):
+                startup_nodes = [ClusterNode(node["host"], node["port"]) for node in startup_nodes_data]
+                kwargs["startup_nodes"] = startup_nodes
+
+        else:
+            kwargs = client_state
+            obj = Redis
+
+        return obj(**kwargs)
+
+    def _clear_unlocked(self) -> None:
+        """Clear storage data (caller must hold locks).
+
+        For Redis storage, this method should not be called since slide()
+        uses Lua scripts and doesn't call clear() internally.
+        """
+        raise NotImplementedError(
+            "RedisStorage does not support _clear_unlocked(). Use clear() instead - Redis uses atomic Lua scripts."
+        )
 
     def clear(self) -> None:
         """Clear the sliding storage by resetting all elements to zero."""
@@ -450,41 +652,42 @@ class RedisStorage(BaseStorage):
                 val: str = self._client.lindex(self._data, index)
                 return int(val) if val is not None else 0
 
-    def __getstate__(self) -> dict:
-        """Get the serializable state of the object.
-
-        Excludes non-serializable objects (Redis client and locks).
-        """
+    def __getstate__(self) -> dict[str, Any]:
+        """Prepare for pickling."""
         state = self.__dict__.copy()
         # Remove non-serializable objects
         state.pop("_client", None)
         state.pop("_lock", None)
         state.pop("_rlock", None)
+
+        # Extract client metadata (client must exist by this point)
+        client_info = self._extract_client_state()
+        state.update(client_info)  # Adds "client_type" and "client_state"
+
         return state
 
     def __reduce__(self) -> tuple[type["RedisStorage"], tuple[str, int], dict[str, Any]]:
         """Support the pickle protocol.
 
-        Returns a tuple with the constructor call and the state of the object.
+        Returns a tuple (class, args, state) for unpickling.
+        Client will be None during __init__, then restored via __setstate__.
+
+        :return: Tuple for pickle protocol (class, args, state)
         """
         return self.__class__, (self.name, self.capacity), self.__getstate__()
 
-    def __setstate__(self, state: dict) -> None:
-        """Restore the state of the object from a serialized dictionary.
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore after unpickling."""
+        # Extract client restoration data before updating __dict__
+        client_type = state.pop("client_type")
+        client_state = state.pop("client_state")
 
-        Restores the Redis connection and recreates the locks.
-        """
+        # Update object state
         self.__dict__.update(state)
 
-        # Add socket timeouts to prevent hanging on Redis operations
-        if "socket_timeout" not in self._redis_kwargs:
-            self._redis_kwargs["socket_timeout"] = 5.0
-        if "socket_connect_timeout" not in self._redis_kwargs:
-            self._redis_kwargs["socket_connect_timeout"] = 5.0
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=DeprecationWarning, module="redis")
+            self._client = self._restore_client_from_state(client_type, client_state)
 
-        self._client = Redis(**self._redis_kwargs)
-        # Ensure timestamp key is set if it wasn't in the serialized state
-        if not hasattr(self, "_timestamp"):
-            self._timestamp = f"{self.name}:timestamp"
-        self._lock = self._client.lock(f"{self.name}:lock", blocking=True, timeout=1, blocking_timeout=1)
-        self._rlock = RedisReentrantLock(self._client, self.name)
+        # Recreate locks using reusable method
+        self._create_locks()

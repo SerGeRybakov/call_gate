@@ -16,6 +16,7 @@ Optional dependencies:
   - `redis` for Redis-based storage.
 """
 
+import inspect
 import json
 import time
 
@@ -26,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from call_gate.errors import (
     CallGateImportError,
+    CallGateRedisConfigurationError,
     CallGateTypeError,
     CallGateValueError,
     FrameLimitError,
@@ -52,66 +54,94 @@ if TYPE_CHECKING:
 
     from concurrent.futures.thread import ThreadPoolExecutor
 
-
 try:
     import redis
+
+    from redis import Redis, RedisCluster
+
+    from call_gate.storages.redis import RedisStorage
 except ImportError:
     redis = Sentinel
+    Redis = Sentinel
+    RedisCluster = Sentinel
+    RedisStorage = Sentinel
 
 
 class CallGate:
-    """CallGate is a thread-safe, process-safe, coroutine-sage distributed time-bound rate limit counter.
+    """Thread-safe, process-safe, coroutine-safe distributed time-bound rate limit counter.
 
-    The gate is divided into equal frames basing on the gate size and frame step.
-    Each frame is bound to the frame_step set frame step and keeps track of increments and decrements
-    within a time period equal to the frame step. Values in the ``data[0]`` are always bound
-    to the current granular time frame step. Tracking timestamp may be bound to a personalized timezone.
+    The gate divides time into equal frames based on gate size and frame step parameters.
+    Each frame tracks increments and decrements within its time period. Values in ``data[0]``
+    are always bound to the current granular time frame step. Tracking timestamp may be bound
+    to a personalized timezone.
 
-    The gate keeps only those values which are within the gate bounds. The old values are removed
-    automatically when the gate is full and the new frame period started.
+    The gate maintains only values within its bounds, automatically removing old values when
+    the gate is full and a new frame period starts.
 
-    The sum of the frames values increases while the gate is not full. When it's full, the sum will
-    decrease on each slide (due to erasing of the outdated frames) and increase again on each increment.
+    Frame values sum increases while the gate is not full. When full, the sum decreases on
+    each slide (due to outdated frame removal) and increases again on each increment.
 
-    If the gate was not used for a while and some (or all) frames are outdated and a new increment
-    is made, the outdated frames will be replaced with the new period from the current moment
-    up to the last valid timestamp (if there is one). In other words, on increment the gate always
-    keeps frames from the current moment back to history, ordered by granular frame step without any gaps.
+    If the gate was unused for a while and frames are outdated when a new increment occurs,
+    outdated frames are replaced with the new period from the current moment up to the last
+    valid timestamp. On increment, the gate always maintains frames from current moment back
+    to history, ordered by granular frame step without gaps.
 
-    If any of gate or frame limit is set and  any of these limits are exceeded, ``GateLimitError``
-    or ``FrameLimitError`` (derived from ``ThrottlingError``) will be thrown.
-    The error provides the information of the exceeded limit type and its value.
+    When gate or frame limits are set and exceeded, ``GateLimitError`` or ``FrameLimitError``
+    (derived from ``ThrottlingError``) will be raised, providing information about the
+    exceeded limit type and value.
 
-    Also, the gate may throw its own exceptions derived from ``CallGateBaseError``. Each of them
-    also originates from Python typical native exceptions: ``ValueError``, ``TypeError``, ``ImportError``.
+    The gate may raise custom exceptions derived from ``CallGateBaseError``, which also
+    originate from Python native exceptions: ``ValueError``, ``TypeError``, ``ImportError``.
 
-    The gate has 3 types of data storage:
-        - ``GateStorageType.simple`` (default) - stores data in a ``collections.deque``.
+    **Storage Types:**
 
-        - ``GateStorageType.shared`` - stores data in a piece of memory that is shared between processes
-        and threads started from one parent process/thread.
+    - ``GateStorageType.simple`` (default) - stores data in ``collections.deque``
+    - ``GateStorageType.shared`` - stores data in shared memory between processes and threads
+    - ``GateStorageType.redis`` - stores data in Redis for distributed applications
 
-        - ``GateStorageType.redis`` (requires ``redis`` (``redis-py``) - stores data in Redis,
-          what provides a distributed storage between multiple processes, servers and Docker containers.
+    **Redis Storage:**
 
-    CallGate constructor accepts ``**kwargs`` for ``GateStorageType.redis`` storage. The parameters described
-    at https://redis.readthedocs.io/en/latest/connections.html for ``redis.Redis`` object can be passed
-    as keyword arguments. Redis URL is not supported. If not provided, the gate will use the default
-    connection parameters, except the ``db``, which is set to ``15``.
+    Redis storage supports both single Redis instances and Redis clusters. For Redis storage,
+    provide a pre-initialized Redis or RedisCluster client via the ``redis_client`` parameter.
 
-    :param name: gate name
-    :param gate_size: The total size of the gate (as a timedelta or number of seconds).
-    :param frame_step: The granularity of each frame in the gate (either as a timedelta or seconds).
-    :param gate_limit: Maximum allowed sum of values across the gate, default is ``0`` (no limit).
-    :param frame_limit: Maximum allowed value per frame in the gate, default is ``0`` (no limit).
-    :param timezone: Timezone name ("UTC", "Europe/Rome") for handling frames timestamp, default is ``None``.
-    :param storage: Type of data storage: one of GateStorageType keys, default is ``GateStorageType.simple``.
-    :param kwargs: Special parameters for storage.
+    :param name: Gate name for identification.
+    :param gate_size: Total gate size as timedelta or seconds.
+    :param frame_step: Frame granularity as timedelta or seconds.
+    :param gate_limit: Maximum sum across gate (0 = no limit).
+    :param frame_limit: Maximum value per frame (0 = no limit).
+    :param timezone: Timezone name for timestamp handling.
+    :param storage: Storage type from GateStorageType.
+    :param redis_client: Pre-initialized Redis/RedisCluster client for Redis storage.
     """
 
     @staticmethod
     def _is_int(value: Any) -> bool:
         return value is not None and not isinstance(value, bool) and isinstance(value, int)
+
+    def _validate_redis_configuration(
+        self, redis_client: Optional[Union[Redis, RedisCluster]], storage: GateStorageModeType
+    ) -> None:
+        """Validate Redis client configuration and perform connection test.
+
+        :raises: CallGateRedisConfigurationError
+        """
+        if storage in (GateStorageType.redis, "redis") and redis_client is None:
+            raise CallGateRedisConfigurationError(
+                "Redis storage requires a pre-initialized `Redis` or `RedisCluster` client."
+            )
+
+        if redis_client is not None:
+            if not isinstance(redis_client, (Redis, RedisCluster)):
+                raise CallGateRedisConfigurationError(
+                    "The 'redis_client' parameter must be a pre-initialized `Redis` or `RedisCluster` client. "
+                    f"Received type: {type(redis_client)}."
+                )
+
+            # Perform ping test if redis_client is provided
+            try:
+                redis_client.ping()
+            except Exception as e:
+                raise CallGateRedisConfigurationError(f"Failed to connect to Redis: {e}") from e
 
     @staticmethod
     def _validate_and_set_gate_and_granularity(gate_size: Any, step: Any) -> tuple[timedelta, timedelta]:
@@ -192,9 +222,11 @@ class CallGate:
         frame_limit: int = 0,
         timezone: str = Sentinel,
         storage: GateStorageModeType = GateStorageType.simple,
+        redis_client: Optional[Union[Redis, RedisCluster]] = None,
+        redis_lock_timeout: int = 5,
+        redis_lock_blocking_timeout: int = 5,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
-        **kwargs: dict[str, Any],
     ) -> None:
         manager = get_global_manager()
         self._lock = manager.Lock()
@@ -207,7 +239,8 @@ class CallGate:
         self._gate_size, self._frame_step = self._validate_and_set_gate_and_granularity(gate_size, frame_step)
         self._gate_limit, self._frame_limit = self._validate_and_set_limits(gate_limit, frame_limit)
         self._frames: int = int(self._gate_size // self._frame_step)
-        self._kwargs = kwargs
+
+        storage_kw: dict[str, Any] = {}
 
         storage_err = ValueError("Invalid `storage`: gate storage must be one of `GateStorageType` values.")
         if not isinstance(storage, (str, GateStorageType)):
@@ -221,9 +254,13 @@ class CallGate:
 
         if storage == GateStorageType.simple:
             storage_type = SimpleStorage
+            # Pass manager to Simple storage
+            storage_kw["manager"] = manager
 
         elif storage == GateStorageType.shared:
             storage_type = SharedMemoryStorage
+            # Pass manager to Shared storage
+            storage_kw["manager"] = manager
 
         elif storage == GateStorageType.redis:
             if redis is Sentinel:  # no cov
@@ -231,21 +268,28 @@ class CallGate:
                     "Package `redis` (`redis-py`) is not installed. Please, install it manually to use Redis storage "
                     "or set storage to `simple' or `shared`."
                 )
-            from call_gate.storages.redis import RedisStorage
-
             storage_type = RedisStorage
+            self._validate_redis_configuration(redis_client, storage)
+            # Add redis_client for Redis storage (Redis uses its own locks, not manager)
+            if redis_client is not None:
+                storage_kw["client"] = redis_client
+                storage_kw["lock_timeout"] = redis_lock_timeout
+                storage_kw["lock_blocking_timeout"] = redis_lock_blocking_timeout
 
         else:  # no cov
             raise storage_err
 
         self._storage: GateStorageType = storage
-        kw = {}
+
         if _data:
             self._validate_data(_data)
-            kw.update({"data": _data})
-        if kwargs:  # no cov
-            kw.update(**kwargs)  # type: ignore[call-overload]
-        self._data: BaseStorage = storage_type(name, self._frames, manager=manager, **kw)  # type: ignore[arg-type]
+            storage_kw.update({"data": _data})
+
+        self._data: BaseStorage = storage_type(
+            name,
+            self._frames,
+            **storage_kw,  # type: ignore[arg-type]
+        )
 
         # Initialize _current_dt: validate provided value first, then try to restore from storage
         if _current_dt is not None:
@@ -279,7 +323,6 @@ class CallGate:
                 "storage": self.storage,
                 "_data": self.data,
                 "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
-                **self._kwargs,
             }
 
     def to_file(self, path: Union[str, Path]) -> None:
@@ -301,6 +344,7 @@ class CallGate:
         path: Union[str, Path],
         *,
         storage: GateStorageModeType = Sentinel,
+        redis_client: Optional[Union[Redis, RedisCluster]] = None,
     ) -> "CallGate":
         """Restore the gate from file.
 
@@ -309,14 +353,23 @@ class CallGate:
 
         :param path: path to file
         :param storage: storage type
+        :param redis_client: pre-initialized Redis/RedisCluster client for Redis storage
         """
+        sig = inspect.signature(cls.__init__)
+        allowed_params = set(sig.parameters.keys()) - {"self", "redis_client"}
+
         if isinstance(path, str):
             path = Path(path)
+
         with path.open(mode="r", encoding="utf-8") as f:
             state = json.load(f)
-            if storage is not Sentinel and storage != state["storage"]:
-                state["storage"] = storage
-            return cls(**state)
+
+        if storage is not Sentinel and storage != state["storage"]:
+            state["storage"] = storage
+
+        filtered_params = {k: v for k, v in state.items() if k in allowed_params}
+
+        return cls(**filtered_params, redis_client=redis_client)
 
     def _current_step(self) -> datetime:
         current_time = datetime.now(self._timezone)

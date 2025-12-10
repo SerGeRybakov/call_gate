@@ -103,6 +103,16 @@ class BaseStorage(ABC):
         pass
 
     @abstractmethod
+    def _clear_unlocked(self) -> None:
+        """Clear storage data without acquiring locks.
+
+        IMPORTANT: This method must only be called when locks are already
+        held. Concrete storage classes must implement the actual clearing
+        logic.
+        """
+        pass
+
+    @abstractmethod
     def get_timestamp(self) -> Optional[datetime]:
         """Get the last update timestamp from storage.
 

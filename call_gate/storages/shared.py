@@ -1,9 +1,9 @@
 """
 Shared in-memory storage implementation using multiprocessing shared memory.
 
-This storage is suitable for multiprocess applications. The storage uses a numpy
-array in shared memory to store the values of the gate. The array is divided into
-frames which are accessed by the index of the frame.
+This storage is suitable for multiprocess applications. The storage uses a
+multiprocessing Manager list in shared memory to store the values of the gate.
+The list is divided into frames which are accessed by the index of the frame.
 
 The storage is thread-safe and process-safe for multiple readers and writers.
 
@@ -13,7 +13,7 @@ is restarted, the gate values are lost.
 
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from typing_extensions import Unpack
 
@@ -22,16 +22,12 @@ from call_gate.storages.base_storage import BaseStorage
 from call_gate.typings import State
 
 
-if TYPE_CHECKING:
-    from multiprocessing.managers import SyncManager
-
-
 class SharedMemoryStorage(BaseStorage):
     """Shared in-memory storage implementation using multiprocessing shared memory.
 
-    This storage is suitable for multiprocess applications. The storage uses a numpy
-    array in shared memory to store the values of the gate. The array is divided into
-    frames which are accessed by the index of the frame.
+    This storage is suitable for multiprocess applications. The storage uses a
+    multiprocessing Manager list in shared memory to store the values of the gate.
+    The list is divided into frames which are accessed by the index of the frame.
 
     The storage is thread-safe and process-safe for multiple readers and writers.
 
@@ -47,7 +43,7 @@ class SharedMemoryStorage(BaseStorage):
         self, name: str, capacity: int, *, data: Optional[list[int]] = None, **kwargs: Unpack[dict[str, Any]]
     ) -> None:
         super().__init__(name, capacity, **kwargs)
-        manager: SyncManager = kwargs.get("manager")
+        manager = kwargs.get("manager")
         with self._lock:
             if data:
                 data = list(data)
@@ -90,6 +86,12 @@ class SharedMemoryStorage(BaseStorage):
             with self._lock:
                 return deepcopy(self._data)
 
+    def _clear_unlocked(self) -> None:
+        """Clear storage data (caller must hold locks)."""
+        self._data[:] = [0] * self.capacity
+        self._sum.value = 0
+        self._timestamp.value = 0.0
+
     def clear(self) -> None:
         """Clear the contents of the shared array.
 
@@ -97,9 +99,7 @@ class SharedMemoryStorage(BaseStorage):
         """
         with self._rlock:
             with self._lock:
-                self._data[:] = [0] * self.capacity
-                self._sum.value = 0
-                self._timestamp.value = 0.0
+                self._clear_unlocked()
 
     def slide(self, n: int) -> None:
         """Slide data to the right by n frames.
@@ -113,7 +113,7 @@ class SharedMemoryStorage(BaseStorage):
                 if n < 1:
                     raise CallGateValueError("Value must be >= 1.")
                 if n >= self.capacity:
-                    self.clear()
+                    self._clear_unlocked()
                 else:
                     self._data[n:] = self._data[:-n]
                     self._data[:n] = [0] * n
