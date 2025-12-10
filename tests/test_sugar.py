@@ -6,7 +6,13 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
+from tests.parameters import (
+    GITHUB_ACTIONS_REDIS_TIMEOUT,
+    create_call_gate,
+    create_redis_client,
+    random_name,
+    storages,
+)
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -53,7 +59,9 @@ class TestSugar:
     def test_file(self, storage, tmp_path, path_type):
         temp_dir = tmp_path / "file_tests"
         temp_file = temp_dir / f"{storage}_name.json"
-        gate = CallGate(random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=30, storage=storage)
+        gate = create_call_gate(
+            random_name(), timedelta(minutes=1), timedelta(seconds=1), frame_limit=30, storage=storage
+        )
         try:
             for _ in range(random.randint(5, 10)):
                 gate.update(value=random.randint(1, 5))
@@ -80,10 +88,28 @@ class TestSugar:
         while new_storage == old_storage:
             new_storage = random.choice(storages_choices)
 
-        new_gate = CallGate.from_file(temp_file, storage=new_storage)
+        # Create redis_client for new gate if storage is redis
+        redis_client = None
+        if new_storage == "redis":
+            redis_client = create_redis_client()
+
+        # Also need to handle case when old storage was redis (it's saved in file)
+        with open(temp_file) as f:
+            saved_data = json.load(f)
+            saved_storage = saved_data.get("storage", "simple")
+
+        # If saved storage is redis, we need to provide client regardless of new_storage
+        if saved_storage == "redis" and redis_client is None:
+            redis_client = create_redis_client()
+
+        new_gate = CallGate.from_file(temp_file, storage=new_storage, redis_client=redis_client)
         try:
             assert new_gate.name == name
             assert new_gate.state == state
             assert new_gate.current_dt == old_current_dt
         finally:
             new_gate.clear()
+
+
+if __name__ == "__main__":
+    pytest.main()

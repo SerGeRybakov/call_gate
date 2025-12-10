@@ -5,6 +5,15 @@ from datetime import timedelta
 
 import pytest
 
+from tests.cluster.utils import ClusterManager
+from tests.parameters import (
+    create_call_gate,
+    create_redis_client,
+    create_redis_cluster_client,
+    random_name,
+    storages,
+)
+
 
 try:
     import redis
@@ -13,10 +22,6 @@ try:
 except ImportError:
     REDIS_AVAILABLE = False
 
-from call_gate import CallGate
-from tests.cluster.utils import ClusterManager
-from tests.parameters import random_name, storages
-
 
 def _cleanup_redis_db():
     """Clean Redis database thoroughly."""
@@ -24,14 +29,11 @@ def _cleanup_redis_db():
         return
 
     try:
-        r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
-
+        r = create_redis_client()
         # Use FLUSHDB to completely clear the database - much faster than keys + delete
         r.flushdb()
-
         # Also ensure any remaining connections are closed
         r.connection_pool.disconnect()
-
     except (redis.ConnectionError, redis.TimeoutError, redis.ResponseError):
         # Redis not available or error occurred, skip cleanup
         pass
@@ -44,8 +46,7 @@ def _cleanup_redis_cluster():
         return
 
     try:
-        manager = ClusterManager()
-        cluster_client = manager.get_cluster_client()
+        cluster_client = create_redis_cluster_client()
         # Use FLUSHALL to clear all databases on all nodes
         cluster_client.flushall()
         # Close connections
@@ -99,7 +100,7 @@ def clean_redis_session():
 @pytest.fixture(scope="function", params=storages)
 def call_gate_2s_1s_no_limits(request):
     gate_name = random_name()
-    gate = CallGate(
+    gate = create_call_gate(
         name=gate_name, gate_size=timedelta(seconds=2), frame_step=timedelta(seconds=1), storage=request.param
     )
     try:
@@ -109,7 +110,7 @@ def call_gate_2s_1s_no_limits(request):
         # For Redis storage, ensure complete cleanup
         if request.param in ("redis", "GateStorageType.redis") and REDIS_AVAILABLE:
             try:
-                r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
+                r = create_redis_client()
                 # Delete any remaining keys for this gate
                 keys_to_delete = []
                 for key in r.scan_iter(match=f"*{gate_name}*"):
@@ -128,25 +129,29 @@ def cluster_manager():
 
     try:
         # Ensure all nodes are running at start
-        manager.start_all_nodes()
+        running = manager.get_running_nodes()
+        if len(running) < 3:
+            manager.start_all_nodes()
 
-        # Wait for cluster to be ready
-        if not manager.wait_for_cluster_ready(timeout=30):
-            pytest.skip("Redis cluster not available for testing")
+            # Wait for cluster to be ready
+            if not manager.wait_for_cluster_ready(timeout=30):
+                raise ConnectionError("Cluster not ready.")
 
         yield manager
 
     finally:
         # GUARANTEED cleanup: ensure all nodes are running after test
         try:
-            print("🔧 Restoring all cluster nodes after test...")
-            manager.start_all_nodes()
-
             # Wait for cluster to stabilize before next test
-            if not manager.wait_for_cluster_ready(timeout=30):
-                print("⚠️  Warning: Cluster not ready after cleanup")
-            else:
-                print("✅ Cluster restored successfully")
+            running = manager.get_running_nodes()
+            if len(running) < 3:
+                print("🔧 Restoring all cluster nodes after test...")
+                manager.start_all_nodes()
+
+                if not manager.wait_for_cluster_ready(timeout=30):
+                    print("⚠️  Warning: Cluster not ready after cleanup")
+                else:
+                    print("✅ Cluster restored successfully")
         except Exception as e:
             print(f"❌ Failed to restore cluster: {e}")
             # Try one more time
@@ -160,7 +165,7 @@ def cluster_manager():
 @pytest.fixture(scope="function", params=storages)
 def call_gate_2s_1s_gl5(request):
     gate_name = random_name()
-    gate = CallGate(
+    gate = create_call_gate(
         name=gate_name,
         gate_size=timedelta(seconds=2),
         frame_step=timedelta(seconds=1),
@@ -174,7 +179,7 @@ def call_gate_2s_1s_gl5(request):
         # For Redis storage, ensure complete cleanup
         if request.param in ("redis", "GateStorageType.redis") and REDIS_AVAILABLE:
             try:
-                r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
+                r = create_redis_client()
                 # Delete any remaining keys for this gate
                 keys_to_delete = []
                 for key in r.scan_iter(match=f"*{gate_name}*"):
@@ -188,7 +193,7 @@ def call_gate_2s_1s_gl5(request):
 @pytest.fixture(scope="function", params=storages)
 def call_gate_2s_1s_fl5(request):
     gate_name = random_name()
-    gate = CallGate(
+    gate = create_call_gate(
         name=gate_name,
         gate_size=timedelta(seconds=2),
         frame_step=timedelta(seconds=1),
@@ -202,7 +207,7 @@ def call_gate_2s_1s_fl5(request):
         # For Redis storage, ensure complete cleanup
         if request.param in ("redis", "GateStorageType.redis") and REDIS_AVAILABLE:
             try:
-                r = redis.Redis(host="localhost", port=6379, db=15, decode_responses=True)
+                r = create_redis_client()
                 # Delete any remaining keys for this gate
                 keys_to_delete = []
                 for key in r.scan_iter(match=f"*{gate_name}*"):

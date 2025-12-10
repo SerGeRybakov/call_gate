@@ -5,18 +5,17 @@ scenarios like node failures and recovery.
 """
 
 import time
-import warnings
 
 from datetime import timedelta
 
 import pytest
 
 from call_gate import CallGate, GateStorageType
+from call_gate.errors import CallGateRedisConfigurationError
 from tests.cluster.utils import ClusterManager
 from tests.parameters import random_name
 
 
-@pytest.mark.cluster
 class TestRedisClusterBasic:
     """Basic Redis cluster functionality tests."""
 
@@ -301,46 +300,36 @@ class TestRedisClusterFaultTolerance:
                 pass  # Cluster might be unstable
 
 
-@pytest.mark.cluster
 class TestRedisClusterConfiguration:
     """Test Redis cluster configuration scenarios."""
 
-    def test_missing_redis_client_warning(self):
-        """Test warning when Redis storage is requested but no client provided."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            gate = CallGate(
+    def test_missing_redis_client_error(self):
+        """Test error when Redis storage is requested but no client provided (v2.0+)."""
+        with pytest.raises(CallGateRedisConfigurationError, match="Redis storage requires a pre-initialized"):
+            CallGate(
                 name=random_name(),
                 gate_size=timedelta(seconds=10),
                 frame_step=timedelta(seconds=1),
                 storage=GateStorageType.redis,
-                # No redis_client and no kwargs - should use defaults with warning
+                # No redis_client - should raise error in v2.0+
             )
-            gate.clear()  # Cleanup
 
-            # Check that deprecation warning was issued
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "No Redis configuration provided" in str(w[0].message)
-
-    def test_cluster_client_with_kwargs_deprecation_warning(self, cluster_manager):
-        """Test deprecation warning when both cluster client and kwargs provided."""
+    def test_cluster_client_ignores_extra_kwargs(self, cluster_manager):
+        """Test that extra kwargs (like host, port) are not accepted in v2.0+."""
         cluster_client = cluster_manager.get_cluster_client()
 
-        with pytest.warns(DeprecationWarning, match="Both 'redis_client' and Redis connection parameters"):
-            gate = CallGate(
+        # In v2.0+, host and port are not accepted parameters
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            CallGate(
                 name=random_name(),
                 gate_size=timedelta(seconds=10),
                 frame_step=timedelta(seconds=1),
                 storage=GateStorageType.redis,
                 redis_client=cluster_client,
-                host="localhost",  # This should be ignored
+                host="localhost",  # This should cause TypeError
                 port=6379,
             )
 
-        try:
-            # Should use cluster_client, not the kwargs
-            gate.update(5)
-            assert gate.sum == 5
-        finally:
-            gate.clear()
+
+if __name__ == "__main__":
+    pytest.main()

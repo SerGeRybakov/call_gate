@@ -22,10 +22,12 @@ services:
       "--port", "7001",
       "--cluster-enabled", "yes",
       "--cluster-config-file", "nodes-7001.conf",
-      "--cluster-node-timeout", "5000"
+      "--cluster-node-timeout", "5000",
+      "--cluster-announce-ip", "127.0.0.1",
+      "--cluster-announce-port", "7001",
+      "--cluster-announce-bus-port", "17001"
     ]
-    ports:
-      - 7001:7001
+    network_mode: "host"
     restart: 'no'
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "7001", "ping"]
@@ -42,10 +44,12 @@ services:
       "--port", "7002",
       "--cluster-enabled", "yes",
       "--cluster-config-file", "nodes-7002.conf",
-      "--cluster-node-timeout", "5000"
+      "--cluster-node-timeout", "5000",
+      "--cluster-announce-ip", "127.0.0.1",
+      "--cluster-announce-port", "7002",
+      "--cluster-announce-bus-port", "17002"
     ]
-    ports:
-      - 7002:7002
+    network_mode: "host"
     restart: 'no'
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "7002", "ping"]
@@ -62,10 +66,12 @@ services:
       "--port", "7003",
       "--cluster-enabled", "yes",
       "--cluster-config-file", "nodes-7003.conf",
-      "--cluster-node-timeout", "5000"
+      "--cluster-node-timeout", "5000",
+      "--cluster-announce-ip", "127.0.0.1",
+      "--cluster-announce-port", "7003",
+      "--cluster-announce-bus-port", "17003"
     ]
-    ports:
-      - 7003:7003
+    network_mode: "host"
     restart: 'no'
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "7003", "ping"]
@@ -77,6 +83,7 @@ services:
   redis-cluster-init:
     container_name: call-gate-redis-cluster-init
     image: redis:latest
+    network_mode: "host"
     depends_on:
       - redis-cluster-node-1
       - redis-cluster-node-2
@@ -84,6 +91,6 @@ services:
     command: >
       sh -c "
         sleep 10 &&
-        redis-cli --cluster create redis-cluster-node-1:7001 redis-cluster-node-2:7002 redis-cluster-node-3:7003 --cluster-replicas 0 --cluster-yes
+        redis-cli --cluster create 127.0.0.1:7001 127.0.0.1:7002 127.0.0.1:7003 --cluster-replicas 0 --cluster-yes
       "
     restart: 'no'

@@ -4,7 +4,7 @@ import pytest
 
 from call_gate.errors import GateOverflowError
 from call_gate.storages.redis import RedisStorage
-from tests.parameters import get_redis_kwargs, random_name
+from tests.parameters import create_redis_client, random_name
 
 
 class TestRedisStorageEdgeCases:
@@ -12,10 +12,8 @@ class TestRedisStorageEdgeCases:
 
     def test_extract_constructor_params_exception_handling(self):
         """Test exception handling in _extract_constructor_params (line 301)."""
-        try:
-            storage = RedisStorage(random_name(), capacity=3, **get_redis_kwargs())
-        except Exception:
-            pytest.skip("Redis not available")
+        client = create_redis_client()
+        storage = RedisStorage(random_name(), capacity=3, client=client)
 
         try:
             # Create a mock object that raises AttributeError when accessing __dict__
@@ -40,10 +38,8 @@ class TestRedisStorageEdgeCases:
 
     def test_process_dict_value_continue_path(self):
         """Test continue path in _process_dict_value (line 337)."""
-        try:
-            storage = RedisStorage(random_name(), capacity=3, **get_redis_kwargs())
-        except Exception:
-            pytest.skip("Redis not available")
+        client = create_redis_client()
+        storage = RedisStorage(random_name(), capacity=3, client=client)
 
         try:
             # Create a dictionary with serializable values that match target params
@@ -68,10 +64,8 @@ class TestRedisStorageEdgeCases:
 
     def test_slide_with_capacity_clear(self):
         """Test slide method when n >= capacity triggers clear (line 468)."""
-        try:
-            storage = RedisStorage(random_name(), capacity=5, **get_redis_kwargs())
-        except Exception:
-            pytest.skip("Redis not available")
+        client = create_redis_client()
+        storage = RedisStorage(random_name(), capacity=5, client=client)
 
         try:
             # Add some data first
@@ -96,10 +90,8 @@ class TestRedisStorageEdgeCases:
 
     def test_atomic_update_overflow_errors(self):
         """Test overflow error handling in atomic_update (lines 551-554)."""
-        try:
-            storage = RedisStorage(random_name(), capacity=3, **get_redis_kwargs())
-        except Exception:
-            pytest.skip("Redis not available")
+        client = create_redis_client()
+        storage = RedisStorage(random_name(), capacity=3, client=client)
 
         try:
             # First add some positive value
@@ -116,3 +108,7 @@ class TestRedisStorageEdgeCases:
                 storage.clear()
             except Exception:
                 pass
+
+
+if __name__ == "__main__":
+    pytest.main()

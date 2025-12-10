@@ -5,58 +5,113 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2024-12-05
+## [2.0.0] - 2025-12-09
+
+### ⚠️ BREAKING CHANGES
+
+**This release contains breaking changes that require migration for Redis storage users.**
+
+1. **Redis storage now requires `redis_client` parameter** - removed `**kwargs` support for Redis connection parameters
+2. **Redis keys format changed** - v1.x data is incompatible with v2.0.0 (migration required)
+3. **`CallGate.from_file()` requires `redis_client` parameter** when restoring Redis storage gates
 
 ### Added
 - **Redis Cluster Support**: CallGate now supports Redis clusters in addition to single Redis instances
 - **Pre-initialized Redis Client Support**: New `redis_client` parameter accepts pre-initialized `Redis` or `RedisCluster` clients
 - **Enhanced Type Safety**: Better type annotations and IDE support for Redis configurations
 - **New Error Type**: `CallGateRedisConfigurationError` for Redis configuration issues
+- [**Code examples**](./examples/)
 
 ### Changed
-- **Redis Storage Initialization**: Now supports both pre-initialized clients and legacy kwargs
+- **Redis Storage Initialization**: `redis_client` parameter is now required (removed `**kwargs`)
+- **Redis Keys Format**: Keys now use hash tags for cluster support (`{gate_name}` instead of `gate_name`)
 - **Improved Documentation**: All docstrings converted to English with RST format
-- **Test Infrastructure**: Cluster tests are isolated and excluded from CI/CD pipeline
+- **Test Infrastructure**: Added comprehensive cluster tests with fault tolerance scenarios
 - **Makefile Enhancements**: Added cluster test targets for all Python versions (3.9-3.14)
-
-### Deprecated
-- **Redis Connection Parameters via kwargs**: Using Redis connection parameters through `**kwargs` is deprecated and will be removed in version 2.0.0
-- **Legacy Redis Configuration**: Users should migrate to the `redis_client` parameter with pre-initialized clients
 
 ### Fixed
 - **Connection Validation**: Added ping() validation for Redis clients during CallGate initialization
 - **Serialization Handling**: Improved serialization for RedisStorage with pre-initialized clients
-- **Docker Compose Configuration**: Removed volumes and auto-restart for better test isolation
+- **Docker Compose Configuration**: Fixed cluster configuration with proper network settings
+- **Multiprocessing Support**: Fixed pickling issues for all storage types
 
-### Security
-- **Connection Timeouts**: Added default socket timeouts to prevent hanging Redis operations
+### Removed
+- **`**kwargs` in CallGate.__init__()**: No longer accepts Redis connection parameters (host, port, db, etc.)
+- **Legacy Redis Configuration**: Removed automatic Redis client creation from kwargs
+- **Old Redis Keys Format**: Keys without hash tags are no longer created
 
-### Migration Guide
+---
 
-#### From kwargs to redis_client
+## ⚠️ MIGRATION GUIDE v1.x → v2.0.0
 
-**Before (deprecated):**
+### BREAKING CHANGES SUMMARY:
+1. Redis storage requires `redis_client` parameter (removed `**kwargs` support)
+2. Redis keys format changed - **old v1.x data is incompatible** with v2.0.0
+3. `CallGate.from_file()` requires `redis_client` for Redis storage
+
+---
+
+### Data Migration for Redis Storage
+
+**Redis keys format has changed** - old v1.x data will NOT be accessible in v2.0.0.
+
+**Step 1: Export data using v1.x**
 ```python
+# Using CallGate v1.x
+from call_gate import CallGate
+
+redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+
+gate_v1 = CallGate("my_gate", 60, 1, storage="redis", **redis_kwargs)
+gate_v1.to_file("gate_backup.json")
+```
+
+**Step 2: Import data using v2.0.0**
+```python
+# Using CallGate v2.0.0
+from call_gate import CallGate
+from redis import Redis
+
+redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+
+client = Redis(**redis_kwargs, decode_responses=True)
+gate_v2 = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client)
+# Data is automatically written to Redis with new key format
+```
+
+**Why keys changed:**
+- v1.x keys: `gate_name`, `gate_name:sum`, `gate_name:timestamp`
+- v2.0.0 keys: `{gate_name}`, `{gate_name}:sum`, `{gate_name}:timestamp`
+- Hash tags `{...}` ensure all keys for one gate are in the same Redis Cluster slot
+
+### API Changes
+
+**Before (v1.x):**
+```python
+redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+
 gate = CallGate(
     name="my_gate",
     gate_size=60,
-    storage=GateStorageType.redis,
-    host="localhost",
-    port=6379,
-    db=15
+    frame_step=1,
+    storage="redis",
+    **redis_kwargs
 )
 ```
 
-**After (recommended):**
+**After (v2.0.0):**
 ```python
 from redis import Redis
 
-client = Redis(host="localhost", port=6379, db=15, decode_responses=True)
+redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+
+client = Redis(**redis_kwargs, decode_responses=True)
 gate = CallGate(
     name="my_gate", 
     gate_size=60,
-    storage=GateStorageType.redis,
-    redis_client=client
+    frame_step=1,
+    storage="redis",
+    redis_client=client  # Required parameter
 )
 ```
 
@@ -79,7 +134,8 @@ cluster_client = RedisCluster(
 gate = CallGate(
     name="cluster_gate",
     gate_size=60,
-    storage=GateStorageType.redis,
+    frame_step=1,
+    storage="redis",
     redis_client=cluster_client
 )
 ```

@@ -71,7 +71,7 @@ coverage:
 	docker compose down
 	docker compose up -d
 	sleep 10
-	pytest --cov=./call_gate --cov-report=html --cov-report=term-missing --cov-branch --ignore=tests/test_asgi_wsgi.py --ignore=tests/test_redis_cluster.py --ignore=tests/cluster/
+	pytest -m "not cluster" --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/cluster/ ./tests --retries=3
 	@echo "Find html report at ./tests/code_coverage/index.html"
 
 

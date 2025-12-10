@@ -44,7 +44,6 @@ class ClusterManager:
 
         if github_actions:
             # GitHub Actions environment - redis-cluster-service provides 6 nodes
-            print("🔧 Detected GitHub Actions - using all 6 cluster nodes")
             return [
                 ClusterNode("localhost", 7000),
                 ClusterNode("localhost", 7001),
@@ -55,7 +54,6 @@ class ClusterManager:
             ]
         else:
             # Local Docker Compose environment - 3 nodes available
-            print("🔧 Detected local environment - using 3 cluster nodes")
             return [
                 ClusterNode("localhost", 7001),
                 ClusterNode("localhost", 7002),

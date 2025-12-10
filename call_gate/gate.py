@@ -16,9 +16,9 @@ Optional dependencies:
   - `redis` for Redis-based storage.
 """
 
+import inspect
 import json
 import time
-import warnings
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,7 +53,6 @@ if TYPE_CHECKING:
     import asyncio
 
     from concurrent.futures.thread import ThreadPoolExecutor
-
 
 try:
     import redis
@@ -105,9 +104,6 @@ class CallGate:
     Redis storage supports both single Redis instances and Redis clusters. For Redis storage,
     provide a pre-initialized Redis or RedisCluster client via the ``redis_client`` parameter.
 
-    Legacy ``**kwargs`` approach for Redis connection parameters is deprecated and will be
-    removed in version 2.0.0. Use ``redis_client`` parameter instead.
-
     :param name: Gate name for identification.
     :param gate_size: Total gate size as timedelta or seconds.
     :param frame_step: Frame granularity as timedelta or seconds.
@@ -116,66 +112,24 @@ class CallGate:
     :param timezone: Timezone name for timestamp handling.
     :param storage: Storage type from GateStorageType.
     :param redis_client: Pre-initialized Redis/RedisCluster client for Redis storage.
-    :param kwargs: Storage parameters (deprecated for Redis).
     """
 
     @staticmethod
     def _is_int(value: Any) -> bool:
         return value is not None and not isinstance(value, bool) and isinstance(value, int)
 
-    @staticmethod
-    def _extract_redis_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Extract Redis-related kwargs, excluding CallGate constructor parameters.
-
-        :param kwargs: All keyword arguments passed to CallGate.
-        :return: Dictionary containing only Redis-related parameters.
-        """
-        callgate_params = {"gate_limit", "frame_limit", "timezone", "storage", "redis_client", "_data", "_current_dt"}
-        redis_kwargs = {k: v for k, v in kwargs.items() if k not in callgate_params}
-
-        # Warn if Redis kwargs are provided
-        if redis_kwargs:
-            warnings.warn(
-                "Using Redis connection parameters via '**kwargs' is deprecated "
-                "and will be removed in version 2.0.0. "
-                "Please use the 'redis_client' parameter with a pre-initialized "
-                "'Redis' or 'RedisCluster' client instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-
-        return redis_kwargs
-
     def _validate_redis_configuration(
-        self, redis_client: Optional[Union[Redis, RedisCluster]], kwargs: dict[str, Any]
-    ) -> dict[str, Any]:
+        self, redis_client: Optional[Union[Redis, RedisCluster]], storage: GateStorageModeType
+    ) -> None:
         """Validate Redis client configuration and perform connection test.
 
-        :return: Redis kwargs to use for storage initialization.
+        :raises: CallGateRedisConfigurationError
         """
-        redis_kwargs = self._extract_redis_kwargs(kwargs)
-
-        if redis_client is None and not redis_kwargs:
-            # Use default Redis configuration for backward compatibility (mainly for tests)
-            redis_kwargs = {"host": "localhost", "port": 6379, "db": 15, "decode_responses": True}
-            warnings.warn(
-                "No Redis configuration provided. Using default connection (localhost:6379, db=15). "
-                "This behavior is deprecated and will be removed in version 2.0.0. "
-                "Please provide explicit Redis configuration via redis_client parameter or **kwargs.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        if redis_client is not None and redis_kwargs:
-            warnings.warn(
-                "Both 'redis_client' and Redis connection parameters ('**kwargs') were provided. "
-                "Using 'redis_client' and ignoring '**kwargs'. "
-                "Redis connection parameters in '**kwargs' will be completely removed in version 2.0.0. "
-                "Please use the 'redis_client' parameter instead.",
-                DeprecationWarning,
-                stacklevel=3,
+        if storage in (GateStorageType.redis, "redis") and redis_client is None:
+            raise CallGateRedisConfigurationError(
+                "Redis storage requires a pre-initialized `Redis` or `RedisCluster` client."
             )
 
-        # Perform ping test if redis_client is provided
         if redis_client is not None:
             if not isinstance(redis_client, (Redis, RedisCluster)):
                 raise CallGateRedisConfigurationError(
@@ -183,12 +137,11 @@ class CallGate:
                     f"Received type: {type(redis_client)}."
                 )
 
+            # Perform ping test if redis_client is provided
             try:
                 redis_client.ping()
             except Exception as e:
                 raise CallGateRedisConfigurationError(f"Failed to connect to Redis: {e}") from e
-
-        return redis_kwargs
 
     @staticmethod
     def _validate_and_set_gate_and_granularity(gate_size: Any, step: Any) -> tuple[timedelta, timedelta]:
@@ -259,7 +212,7 @@ class CallGate:
         if not all(self._is_int(v) for v in data):
             raise CallGateTypeError("Data must be a list or a tuple of integers.")
 
-    def __init__(  # noqa: PLR0912, C901, PLR0915
+    def __init__(
         self,
         name: str,
         gate_size: Union[timedelta, int, float],
@@ -272,7 +225,6 @@ class CallGate:
         redis_client: Optional[Union[Redis, RedisCluster]] = None,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
-        **kwargs: dict[str, Any],
     ) -> None:
         manager = get_global_manager()
         self._lock = manager.Lock()
@@ -285,7 +237,6 @@ class CallGate:
         self._gate_size, self._frame_step = self._validate_and_set_gate_and_granularity(gate_size, frame_step)
         self._gate_limit, self._frame_limit = self._validate_and_set_limits(gate_limit, frame_limit)
         self._frames: int = int(self._gate_size // self._frame_step)
-        self._kwargs = kwargs
 
         storage_kw: dict[str, Any] = {}
 
@@ -294,20 +245,20 @@ class CallGate:
             raise storage_err
 
         if isinstance(storage, str):
-            # Handle special case for redis_cluster which maps to redis storage
-            if storage == "redis_cluster":
-                storage = GateStorageType.redis
-            else:
-                try:
-                    storage = GateStorageType[storage]
-                except KeyError as e:
-                    raise storage_err from e
+            try:
+                storage = GateStorageType[storage]
+            except KeyError as e:
+                raise storage_err from e
 
         if storage == GateStorageType.simple:
             storage_type = SimpleStorage
+            # Pass manager to Simple storage
+            storage_kw["manager"] = manager
 
         elif storage == GateStorageType.shared:
             storage_type = SharedMemoryStorage
+            # Pass manager to Shared storage
+            storage_kw["manager"] = manager
 
         elif storage == GateStorageType.redis:
             if redis is Sentinel:  # no cov
@@ -316,13 +267,10 @@ class CallGate:
                     "or set storage to `simple' or `shared`."
                 )
             storage_type = RedisStorage
-            redis_config = self._validate_redis_configuration(redis_client, kwargs)
-            # Add redis_client for Redis storage
+            self._validate_redis_configuration(redis_client, storage)
+            # Add redis_client for Redis storage (Redis uses its own locks, not manager)
             if redis_client is not None:
                 storage_kw["client"] = redis_client
-            else:
-                # Use Redis kwargs (either provided or default)
-                storage_kw.update(redis_config)
 
         else:  # no cov
             raise storage_err
@@ -333,11 +281,11 @@ class CallGate:
             self._validate_data(_data)
             storage_kw.update({"data": _data})
 
-        if kwargs:
-            self._extract_redis_kwargs(kwargs)
-            storage_kw.update(kwargs)
-
-        self._data: BaseStorage = storage_type(name, self._frames, manager=manager, **storage_kw)  # type: ignore[arg-type]
+        self._data: BaseStorage = storage_type(
+            name,
+            self._frames,
+            **storage_kw,  # type: ignore[arg-type]
+        )
 
         # Initialize _current_dt: validate provided value first, then try to restore from storage
         if _current_dt is not None:
@@ -371,7 +319,6 @@ class CallGate:
                 "storage": self.storage,
                 "_data": self.data,
                 "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
-                **self._kwargs,
             }
 
     def to_file(self, path: Union[str, Path]) -> None:
@@ -393,6 +340,7 @@ class CallGate:
         path: Union[str, Path],
         *,
         storage: GateStorageModeType = Sentinel,
+        redis_client: Optional[Union[Redis, RedisCluster]] = None,
     ) -> "CallGate":
         """Restore the gate from file.
 
@@ -401,14 +349,22 @@ class CallGate:
 
         :param path: path to file
         :param storage: storage type
+        :param redis_client: pre-initialized Redis/RedisCluster client for Redis storage
         """
+        sig = inspect.signature(cls.__init__)
+        allowed_params = set(sig.parameters.keys()) - {"self", "redis_client"}
+
         if isinstance(path, str):
             path = Path(path)
+
         with path.open(mode="r", encoding="utf-8") as f:
             state = json.load(f)
-            if storage is not Sentinel and storage != state["storage"]:
-                state["storage"] = storage
-            return cls(**state)
+
+        filtered_params = {k: v for k, v in state.items() if k in allowed_params}
+
+        if storage is not Sentinel and storage != state["storage"]:
+            state["storage"] = storage
+        return cls(**filtered_params, redis_client=redis_client)
 
     def _current_step(self) -> datetime:
         current_time = datetime.now(self._timezone)

@@ -18,6 +18,17 @@
 
 </div>
 
+---
+
+> ## ⚠️ **IMPORTANT: v2.0.0 Breaking Changes**
+> 
+> **If you're upgrading from v1.x with Redis storage**, you MUST migrate your data.  
+> Redis keys format has changed and old data will be **inaccessible** without migration.
+>
+> 👉 **[See Migration Guide](#️-migration-guide-v1x--v200)** for step-by-step instructions.
+
+---
+
 ## Overview
 
 This project implements a sliding window time-bound rate limiter, which allows tracking events over a configurable time window divided into equal frames. Each frame tracks increments and decrements within a specific time period defined by the frame step.
@@ -208,7 +219,7 @@ Coroutine safety is ensured for all of them by the main class: ``CallGate``.
 
 ### Redis Configuration
 
-**Recommended approach (v1.1.0+):** Use pre-initialized Redis client:
+Use pre-initialized Redis client:
 
 ```python
 from redis import Redis
@@ -259,26 +270,56 @@ gate = CallGate(
 )
 ```
 
-**Legacy approach (deprecated, will be removed in v2.0.0):**
-
-```python
-gate = CallGate(
-    "my_gate", 
-    timedelta(seconds=10), 
-    timedelta(seconds=1), 
-    storage=GateStorageType.redis,
-    host="10.0.0.1",
-    port=16379,
-    db=0,
-    password="secret",
-    ...
-) 
-```
-
 **Important notes:**
-- `decode_responses=True` is required for proper operation
+- `decode_responses=True` is highly recommended for proper operation
 - Connection timeouts are recommended to prevent hanging operations
 - Redis client validation (ping) is performed during CallGate initialization
+
+---
+
+## ⚠️ MIGRATION GUIDE v1.x → v2.0.0
+
+### BREAKING CHANGES SUMMARY:
+1. Due to Redis Cluster support, Redis keys format changed - **old v1.x data is incompatible** with v2.0.0
+2. Redis storage requires pre-initialized `redis_client` parameter (removed `**kwargs` support)
+3. `CallGate.from_file()` requires `redis_client` for Redis storage
+
+---
+
+### Data Migration for Redis Storage
+
+**Redis keys format has changed** - old v1.x data will NOT be accessible in v2.0.0.
+
+**Step 1: Export data using v1.x**
+```python
+# Using CallGate v1.x
+from call_gate import CallGate
+
+redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+
+gate_v1 = CallGate("my_gate", 60, 1, storage="redis", **redis_kwargs)
+gate_v1.to_file("gate_backup.json")
+```
+
+**Step 2: Import data using v2.0.0**
+```python
+# Using CallGate v2.0.0
+from call_gate import CallGate
+from redis import Redis
+
+redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+
+client = Redis(**redis_kwargs, decode_responses=True)
+gate_v2 = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client)
+# Data is automatically written to Redis with new key format
+```
+
+**Why keys changed:**
+- v1.x keys: `gate_name`, `gate_name:sum`, `gate_name:timestamp`
+- v2.0.0 keys: `{gate_name}`, `{gate_name}:sum`, `{gate_name}:timestamp`
+- Hash tags `{...}` ensure all keys for one gate are in the same Redis Cluster slot
+
+---
 
 ### Use Directly
 
@@ -382,8 +423,20 @@ If you need to persist the state of the gate between restarts, you can use the `
 
 To restore the state you can use the `restored = CallGate.from_file({file_path})` method.  
 
-If you wish to restore the state using another storage type, you can pass the desired type as a keyword parameter to 
-`restored = CallGate.from_metadata({file_path}, storage={storage_type})`method.
+**For Redis storage**, you must provide `redis_client` parameter:
+
+```python
+from redis import Redis
+
+client = Redis(host="localhost", port=6379, db=15, decode_responses=True)
+restored = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client)
+```
+
+If you wish to restore the state using another storage type, you can pass the desired type as a keyword parameter:
+
+```python
+restored = CallGate.from_file("gate_backup.json", storage="simple")  # No redis_client needed
+```
 
 Redis persists the gate's state automatically until you restart its container without having shared volumes or clear 
 the Redis database. But still you can save its state to the file and to restore it as well.

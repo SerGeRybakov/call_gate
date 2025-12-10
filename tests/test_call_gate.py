@@ -17,7 +17,13 @@ from call_gate.errors import (
     GateLimitError,
     GateOverflowError,
 )
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
+from tests.parameters import (
+    GITHUB_ACTIONS_REDIS_TIMEOUT,
+    create_call_gate,
+    get_redis_client_if_needed,
+    random_name,
+    storages,
+)
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -143,7 +149,16 @@ class TestCallGateInit:
     )
     def test_init_fails_limits_wrong_type(self, gate_limit, frame_limit, storage):
         with pytest.raises(TypeError):
-            assert CallGate(random_name(), 10, 5, gate_limit=gate_limit, frame_limit=frame_limit, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            assert CallGate(
+                random_name(),
+                10,
+                5,
+                gate_limit=gate_limit,
+                frame_limit=frame_limit,
+                storage=storage,
+                redis_client=redis_client,
+            )
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -156,12 +171,16 @@ class TestCallGateInit:
     )
     def test_init_fails_limits_wrong_value(self, params, storage):
         with pytest.raises(ValueError):
-            assert CallGate(random_name(), 10, 5, **params, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            assert CallGate(random_name(), 10, 5, **params, storage=storage, redis_client=redis_client)
 
     @pytest.mark.parametrize("storage", storages)
     def test_init_fails_frame_limit_exceeds_gate_limit(self, storage):
         with pytest.raises(ValueError):
-            assert CallGate(random_name(), 10, 5, gate_limit=1, frame_limit=2, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            assert CallGate(
+                random_name(), 10, 5, gate_limit=1, frame_limit=2, storage=storage, redis_client=redis_client
+            )
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -169,7 +188,7 @@ class TestCallGateInit:
         [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2), (2, 1)],
     )
     def test_init_gate_limit_frame_limit(self, gate_limit, frame_limit, storage):
-        gate = CallGate(random_name(), 10, 5, gate_limit=gate_limit, frame_limit=frame_limit, storage=storage)
+        gate = create_call_gate(random_name(), 10, 5, gate_limit=gate_limit, frame_limit=frame_limit, storage=storage)
         assert gate.gate_limit == gate_limit
         assert gate.frame_limit == frame_limit
         assert gate.limits.frame_limit == frame_limit
@@ -195,7 +214,7 @@ class TestCallGateInit:
         ],
     )
     def test_init_data(self, data, storage):
-        gate = CallGate(random_name(), 10, 5, _data=data, storage=storage)
+        gate = create_call_gate(random_name(), 10, 5, _data=data, storage=storage)
 
         expected = list(data)
         if len(expected) < gate.frames:
@@ -224,7 +243,7 @@ class TestCallGateInit:
         ],
     )
     def test_init_data_correct(self, initial, expected, storage):
-        gate = CallGate(random_name(), 10, 1, _data=initial, storage=storage)
+        gate = create_call_gate(random_name(), 10, 1, _data=initial, storage=storage)
         try:
             assert gate.data == expected
         finally:
@@ -247,7 +266,8 @@ class TestCallGateInit:
     )
     def test_init_data_fail_on_type(self, data, storage):
         with pytest.raises(TypeError):
-            assert CallGate(random_name(), 10, 5, _data=data, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            assert CallGate(random_name(), 10, 5, _data=data, storage=storage, redis_client=redis_client)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -277,7 +297,7 @@ class TestCallGateInit:
         ],
     )
     def test_init_timestamps(self, current_dt, storage):
-        gate = CallGate(random_name(), 10, 5, _current_dt=current_dt, storage=storage)
+        gate = create_call_gate(random_name(), 10, 5, _current_dt=current_dt, storage=storage)
         assert gate.current_dt == (dateutil.parser.parse(current_dt) if current_dt is not None else current_dt)
 
     @pytest.mark.parametrize("storage", storages)
@@ -312,7 +332,8 @@ class TestCallGateInit:
     )
     def test_init_timestamps_fail_on_type(self, current_dt, storage):
         with pytest.raises(TypeError):
-            CallGate(random_name(), 10, 5, _current_dt=current_dt, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            CallGate(random_name(), 10, 5, _current_dt=current_dt, storage=storage, redis_client=redis_client)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -343,7 +364,8 @@ class TestCallGateInit:
     )
     def test_init_timestamps_fail_on_value(self, current_dt, storage):
         with pytest.raises(ValueError):
-            assert CallGate(random_name(), 10, 5, _current_dt=current_dt, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            assert CallGate(random_name(), 10, 5, _current_dt=current_dt, storage=storage, redis_client=redis_client)
 
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize(
@@ -366,14 +388,20 @@ class TestCallGateInit:
     )
     def test_init_sum_fail_on_type(self, sum, storage):
         with pytest.raises(TypeError):
-            assert CallGate(random_name(), 5, sum=sum, storage=storage)
+            redis_client, storage = get_redis_client_if_needed(storage)
+            assert CallGate(random_name(), 5, sum=sum, storage=storage, redis_client=redis_client)
 
     @pytest.mark.parametrize("storage", storages)
     def test_init_from_dict(self, storage):
-        old_gate = CallGate(random_name(), 10, 5, storage=storage)
+        old_gate = create_call_gate(random_name(), 10, 5, storage=storage)
         for _ in range(100):
             old_gate.update(random.randint(3, 5))
-        new_gate = CallGate(**old_gate.as_dict())
+
+        # Get dict and add redis_client if needed
+        gate_dict = old_gate.as_dict()
+        redis_client, _ = get_redis_client_if_needed(storage)
+
+        new_gate = CallGate(**gate_dict, redis_client=redis_client)
         try:
             assert new_gate.gate_size == old_gate.gate_size
             assert new_gate.frame_step == old_gate.frame_step
@@ -402,7 +430,7 @@ class TestCallGateInit:
         ],
     )
     def test_timezone(self, tz):
-        gate = CallGate(random_name(), 2, 1, timezone=tz)
+        gate = create_call_gate(random_name(), 2, 1, timezone=tz, storage="simple")
         gate.update()
         gate_dict = gate.as_dict()
         try:
@@ -624,7 +652,7 @@ class TestCallGateLimits:
 
     @pytest.mark.parametrize("storage", storages)
     def test_check_limits_gate(self, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
@@ -644,7 +672,7 @@ class TestCallGateLimits:
 
     @pytest.mark.parametrize("storage", storages)
     def test_check_limits_frame(self, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
@@ -670,7 +698,7 @@ class TestStorageEdgeCases:
     @pytest.mark.parametrize("storage", storages)
     def test_slide_negative_value_error(self, storage):
         """Test that slide() with negative values raises CallGateValueError."""
-        gate = CallGate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
+        gate = create_call_gate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
         try:
             # Test n < 1 raises error by calling slide directly on storage
             # This is a low-level test of the storage implementation
@@ -686,7 +714,7 @@ class TestStorageEdgeCases:
     def test_slide_capacity_or_more_calls_clear(self, storage):
         """Test that slide() with n >= capacity calls clear()."""
         # Create gate with very short time window to trigger sliding
-        gate = CallGate(random_name(), timedelta(milliseconds=100), timedelta(milliseconds=10), storage=storage)
+        gate = create_call_gate(random_name(), timedelta(milliseconds=100), timedelta(milliseconds=10), storage=storage)
         try:
             # Add some data
             gate.update(10)
@@ -709,7 +737,7 @@ class TestStorageEdgeCases:
     @pytest.mark.parametrize("storage", storages)
     def test_storage_bool_method(self, storage):
         """Test BaseStorage __bool__ method behavior."""
-        gate = CallGate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
+        gate = create_call_gate(random_name(), timedelta(seconds=2), timedelta(seconds=1), storage=storage)
         try:
             # Initially sum is 0, so storage should be False
             assert not bool(gate._data)
@@ -730,7 +758,7 @@ class TestStorageEdgeCases:
     @pytest.mark.parametrize("storage", storages)
     def test_gate_init_with_none_timestamp(self, storage):
         """Test CallGate initialization with explicit None timestamp to cover line 177."""
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=2),
             timedelta(seconds=1),

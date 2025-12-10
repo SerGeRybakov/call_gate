@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate, FrameLimitError, GateLimitError
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, random_name, storages
+from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
 # ======================================================================
@@ -39,7 +39,7 @@ class TestCallGateAsyncioHelpers:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize("update_value", [1, 5, 10])
     async def test_async_worker(self, update_value, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(), timedelta(seconds=1), timedelta(milliseconds=100), frame_limit=10, storage=storage
         )
         await worker(gate, update_value)
@@ -59,7 +59,7 @@ class TestCallGateAsyncioHelpers:
         ],
     )
     async def test_async_worker_context(self, iterations, update_value, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
@@ -83,7 +83,7 @@ class TestCallGateAsyncioHelpers:
         ],
     )
     async def test_async_worker_decorator(self, iterations, update_value, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
@@ -104,7 +104,7 @@ class TestCallGateAsyncio:
     @pytest.mark.parametrize("storage", storages)
     @pytest.mark.parametrize("update_value", [1, 5, 10])
     async def test_async(self, update_value, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(), timedelta(seconds=1), timedelta(milliseconds=100), frame_limit=10, storage=storage
         )
         await gate.update(update_value)
@@ -124,7 +124,7 @@ class TestCallGateAsyncio:
         ],
     )
     async def test_async_context(self, iterations, update_value, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(), timedelta(seconds=1), timedelta(milliseconds=100), frame_limit=10, storage=storage
         )
 
@@ -149,7 +149,7 @@ class TestCallGateAsyncio:
         ],
     )
     async def test_async_decorator(self, iterations, update_value, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
@@ -171,7 +171,7 @@ class TestCallGateAsyncio:
 
     @pytest.mark.parametrize("storage", storages)
     async def test_check_limits_gate_async(self, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),
@@ -191,7 +191,7 @@ class TestCallGateAsyncio:
 
     @pytest.mark.parametrize("storage", storages)
     async def test_check_limits_frame_async(self, storage):
-        gate = CallGate(
+        gate = create_call_gate(
             random_name(),
             timedelta(seconds=1),
             timedelta(milliseconds=100),

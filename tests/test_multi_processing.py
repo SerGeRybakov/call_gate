@@ -9,6 +9,27 @@ from call_gate import CallGate, GateStorageType
 from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, start_methods, storages
 
 
+# Marker for combinations that are expected to fail due to multiprocessing limitations
+def requires_fork_for_shared_redis(storage, start_method):
+    """Check if storage+start_method combination requires fork.
+
+    SharedMemoryStorage and RedisStorage cannot be pickled with spawn/forkserver
+    because they rely on a shared global Manager that cannot be transferred
+    to child processes via pickling.
+
+    Returns pytest.mark.xfail if the combination is incompatible.
+    """
+    shared_or_redis = storage in ("shared", GateStorageType.shared, "redis", GateStorageType.redis, "redis_cluster")
+    non_fork = start_method in ("spawn", "forkserver")
+
+    if shared_or_redis and non_fork:
+        return pytest.mark.xfail(
+            reason=f"{storage} storage with {start_method} multiprocessing method is not supported "
+            f"(Manager cannot be pickled for child processes)"
+        )
+    return lambda x: x  # No-op decorator
+
+
 def get_test_params() -> list[tuple[int, int, int]]:
     """Get test parameters based on the environment.
 

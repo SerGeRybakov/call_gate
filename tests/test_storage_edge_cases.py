@@ -1,76 +1,98 @@
 """Test edge cases for storage classes to improve coverage."""
 
-from unittest.mock import Mock
+from datetime import timedelta
 
 import pytest
 
-from call_gate.storages.shared import SharedMemoryStorage
-from call_gate.storages.simple import SimpleStorage
-from tests.parameters import random_name
+from call_gate import GateStorageType
+from call_gate.storages.redis import RedisStorage
+from tests.parameters import create_call_gate, create_redis_client, random_name, storages
 
 
 class TestStorageEdgeCases:
     """Test edge cases for storage classes to improve coverage."""
 
-    def test_shared_storage_slide_with_capacity_clear(self):
-        """Test SharedMemoryStorage slide method when n >= capacity triggers clear."""
-        # Mock the manager and its components to avoid multiprocessing issues
-        mock_manager = Mock()
-        mock_lock = Mock()
-        mock_rlock = Mock()
-        mock_list = Mock()
-        mock_value = Mock()
+    @pytest.mark.parametrize("storage", storages)
+    def test_storage_slide_equals_capacity_direct_call(self, storage):
+        """Test calling slide() directly with n == capacity."""
+        gate = create_call_gate(random_name(), timedelta(seconds=5), timedelta(seconds=1), storage=storage)
 
-        mock_manager.Lock.return_value = mock_lock
-        mock_manager.RLock.return_value = mock_rlock
-        mock_manager.list.return_value = mock_list
-        mock_manager.Value.return_value = mock_value
+        try:
+            # Add data to gate
+            gate.update(10)
+            gate.update(20)
+            assert gate.sum == 30
 
-        # Configure context manager behavior
-        mock_lock.__enter__ = Mock(return_value=mock_lock)
-        mock_lock.__exit__ = Mock(return_value=None)
-        mock_rlock.__enter__ = Mock(return_value=mock_rlock)
-        mock_rlock.__exit__ = Mock(return_value=None)
+            # Call slide directly with n == capacity
+            # Works without deadlock thanks to _clear_unlocked()
+            gate._data.slide(gate._data.capacity)
 
-        # Create storage with mocked manager
-        storage = SharedMemoryStorage(random_name(), capacity=3, manager=mock_manager)
+            # All data should be cleared
+            assert gate.sum == 0
+            assert all(v == 0 for v in gate._data.as_list())
 
-        # Mock the clear method to track if it was called
-        storage.clear = Mock()
+        finally:
+            gate.clear()
 
-        # Test slide with n >= capacity (should trigger clear on line 116)
-        storage.slide(3)  # n == capacity
-        storage.clear.assert_called_once()
+    @pytest.mark.parametrize("storage", storages)
+    def test_storage_slide_greater_than_capacity_direct_call(self, storage):
+        """Test calling slide() directly with n > capacity."""
+        gate = create_call_gate(random_name(), timedelta(seconds=5), timedelta(seconds=1), storage=storage)
 
-        # Test slide with n > capacity
-        storage.clear.reset_mock()
-        storage.slide(5)  # n > capacity
-        storage.clear.assert_called_once()
+        try:
+            # Add data to gate
+            gate.update(15)
+            gate.update(25)
+            assert gate.sum == 40
 
-    def test_simple_storage_slide_with_capacity_clear(self):
-        """Test SimpleStorage slide method when n >= capacity triggers clear."""
-        # SimpleStorage doesn't need manager, but we need to mock it for base class
-        mock_manager = Mock()
-        mock_lock = Mock()
-        mock_lock.__enter__ = Mock(return_value=mock_lock)
-        mock_lock.__exit__ = Mock(return_value=None)
-        mock_manager.Lock.return_value = mock_lock
-        mock_manager.RLock.return_value = mock_lock
+            # Call slide directly with n > capacity
+            gate._data.slide(gate._data.capacity + 10)
 
-        storage = SimpleStorage(random_name(), capacity=5, manager=mock_manager)
+            # All data should be cleared
+            assert gate.sum == 0
+            assert all(v == 0 for v in gate._data.as_list())
 
-        # Mock the clear method to track if it was called
-        storage.clear = Mock()
+        finally:
+            gate.clear()
 
-        # Test slide with n >= capacity (should trigger clear on line 113)
-        storage.slide(5)  # n == capacity
-        storage.clear.assert_called_once()
+    @pytest.mark.parametrize(
+        "storage",
+        ["simple", "shared", GateStorageType.simple, GateStorageType.shared],
+    )
+    def test_clear_unlocked_method(self, storage):
+        """Test _clear_unlocked() method is called correctly."""
+        gate = create_call_gate(random_name(), timedelta(seconds=5), timedelta(seconds=1), storage=storage)
 
-        # Test slide with n > capacity
-        storage.clear.reset_mock()
-        storage.slide(10)  # n > capacity
-        storage.clear.assert_called_once()
+        try:
+            # Add some data
+            gate.update(10)
+            gate.update(20)
+            assert gate.sum == 30
+
+            # Clear should work correctly using _clear_unlocked
+            gate.clear()
+
+            assert gate.sum == 0
+            assert all(v == 0 for v in gate._data.as_list())
+
+        finally:
+            gate.clear()
+
+    def test_redis_clear_unlocked_not_implemented(self):
+        """Test RedisStorage._clear_unlocked() raises error."""
+        client = create_redis_client()
+        storage = RedisStorage("test", 5, client=client)
+
+        try:
+            # _clear_unlocked should raise NotImplementedError
+            with pytest.raises(
+                NotImplementedError,
+                match="RedisStorage does not support _clear_unlocked",
+            ):
+                storage._clear_unlocked()
+        finally:
+            storage.clear()
 
 
 if __name__ == "__main__":
-    pytest.main()
+    pytest.main([__file__, "-v"])
