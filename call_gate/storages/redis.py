@@ -242,6 +242,18 @@ class RedisStorage(BaseStorage):
                     args = [str(self.capacity)]
                 self._client.eval(lua_script, 2, self._data, self._sum, *args)
 
+    def __del__(self) -> None:
+        """Cleanup on deletion - close Redis client."""
+        self.close()
+
+    def close(self) -> None:
+        """Close Redis client connection explicitly."""
+        if hasattr(self, "_client") and self._client is not None:
+            try:
+                self._client.close()
+            except Exception:  # noqa: S110
+                pass
+
     def _is_serializable_and_add(self, key: str, value: Any, target_params: set, found_params: dict) -> bool:
         """Check if value is serializable and add to found_params if key matches target_params."""
         if key in target_params and key not in found_params:

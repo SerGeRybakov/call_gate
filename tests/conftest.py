@@ -1,4 +1,5 @@
 import faulthandler
+import os
 import signal
 import sys
 
@@ -6,6 +7,7 @@ from datetime import timedelta
 
 import pytest
 
+from call_gate import GateStorageType
 from tests.cluster.utils import ClusterManager
 from tests.parameters import (
     create_call_gate,
@@ -87,19 +89,27 @@ def _cleanup_all_redis():
     _cleanup_redis_cluster()
 
 
+def pytest_configure(config):
+    """Configure pytest before test collection."""
+    # Enable faulthandler as early as possible
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+
+
 def pytest_sessionstart(session):
     """Enable faulthandler and make a stack dump if tests are stuck."""
-    faulthandler.enable()
-    faulthandler.dump_traceback_later(60)
+    # Re-enable with traceback dump for hanging tests
+    faulthandler.dump_traceback_later(60, file=sys.stderr)
 
     # Register SIGSEGV handler to fail tests explicitly
     def segfault_handler(signum, frame):
-        print("\n" + "=" * 70)
-        print("CRITICAL: SIGSEGV (Segmentation Fault) detected!")
-        print("=" * 70)
-        faulthandler.dump_traceback()
+        sys.stderr.write("\n" + "=" * 70 + "\n")
+        sys.stderr.write("CRITICAL: SIGSEGV (Segmentation Fault) detected!\n")
+        sys.stderr.write("=" * 70 + "\n")
+        sys.stderr.flush()
+        faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+        sys.stderr.flush()
         # Force exit with error code
-        sys.exit(139)  # 128 + 11 (SIGSEGV signal number)
+        os._exit(139)  # Use os._exit to bypass any cleanup that might segfault
 
     signal.signal(signal.SIGSEGV, segfault_handler)
 
@@ -144,7 +154,7 @@ def call_gate_2s_1s_no_limits(request):
     finally:
         gate.clear()
         # For Redis storage, ensure complete cleanup
-        if request.param in ("redis", "GateStorageType.redis") and REDIS_AVAILABLE:
+        if request.param in ("redis", GateStorageType.redis) and REDIS_AVAILABLE:
             try:
                 r = create_redis_client()
                 # Delete any remaining keys for this gate
@@ -219,7 +229,7 @@ def call_gate_2s_1s_gl5(request):
     finally:
         gate.clear()
         # For Redis storage, ensure complete cleanup
-        if request.param in ("redis", "GateStorageType.redis") and REDIS_AVAILABLE:
+        if request.param in ("redis", GateStorageType.redis) and REDIS_AVAILABLE:
             try:
                 r = create_redis_client()
                 # Delete any remaining keys for this gate
@@ -247,7 +257,7 @@ def call_gate_2s_1s_fl5(request):
     finally:
         gate.clear()
         # For Redis storage, ensure complete cleanup
-        if request.param in ("redis", "GateStorageType.redis") and REDIS_AVAILABLE:
+        if request.param in ("redis", GateStorageType.redis) and REDIS_AVAILABLE:
             try:
                 r = create_redis_client()
                 # Delete any remaining keys for this gate

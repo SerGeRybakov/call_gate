@@ -364,10 +364,11 @@ class CallGate:
         with path.open(mode="r", encoding="utf-8") as f:
             state = json.load(f)
 
-        filtered_params = {k: v for k, v in state.items() if k in allowed_params}
-
         if storage is not Sentinel and storage != state["storage"]:
             state["storage"] = storage
+
+        filtered_params = {k: v for k, v in state.items() if k in allowed_params}
+
         return cls(**filtered_params, redis_client=redis_client)
 
     def _current_step(self) -> datetime:
