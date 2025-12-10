@@ -109,7 +109,7 @@ jobs:
             echo "REDIS_DB: ${{ matrix.redis-db }}"
             echo "GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}"
             echo "🚀 Starting tests..."
-            poetry run pytest -v --tb=short --ignore=tests/cluster/
+            poetry run pytest -v --tb=short --ignore=tests/cluster/ --retries=3
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379

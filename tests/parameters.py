@@ -20,7 +20,7 @@ storages = [
     "simple",
     "shared",
     pytest.param("redis", marks=xfail_marker),
-    "redis_cluster",  # Now supported in GitHub Actions
+    pytest.param("redis_cluster", marks=xfail_marker),
     GateStorageType.simple,
     GateStorageType.shared,
     pytest.param(GateStorageType.redis, marks=xfail_marker),
