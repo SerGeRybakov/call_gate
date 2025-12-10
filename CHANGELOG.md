@@ -42,46 +42,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## ⚠️ MIGRATION GUIDE v1.x → v2.0.0
+## ⚠️ MIGRATION GUIDE v1.x → v2.x
 
 ### BREAKING CHANGES SUMMARY:
 1. Redis storage requires `redis_client` parameter (removed `**kwargs` support)
-2. Redis keys format changed - **old v1.x data is incompatible** with v2.0.0
+2. Redis keys format changed - **old v1.x data is incompatible** with v2.x
 3. `CallGate.from_file()` requires `redis_client` for Redis storage
 
 ---
 
 ### Data Migration for Redis Storage
 
-**Redis keys format has changed** - old v1.x data will NOT be accessible in v2.0.0.
+**Redis keys format has changed** - old v1.x data will NOT be accessible in v2.x
 
-**Step 1: Export data using v1.x**
+**Step 1: Export data using v1.x and Python REPL**
 ```python
 # Using CallGate v1.x
-from call_gate import CallGate
-
-redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
-
-gate_v1 = CallGate("my_gate", 60, 1, storage="redis", **redis_kwargs)
-gate_v1.to_file("gate_backup.json")
+>>> from call_gate import CallGate
+>>> redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+>>> gate = CallGate("my_gate", 60, 1, storage="redis", **redis_kwargs)
+>>> gate.to_file("gate_backup.json")
 ```
 
-**Step 2: Import data using v2.0.0**
+**Step 2: Upgrade call-gate version**
+```shell
+pip install call-gate --upgrade
+```
+
+**Step 3: Import data using v2.x and Python REPL**
 ```python
-# Using CallGate v2.0.0
-from call_gate import CallGate
-from redis import Redis
-
-redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
-
-client = Redis(**redis_kwargs, decode_responses=True)
-gate_v2 = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client)
-# Data is automatically written to Redis with new key format
+# Using CallGate v2.x
+>>> from call_gate import CallGate
+>>> from redis import Redis
+>>> redis_kwargs = {"host": "localhost", "port": 6379, "db": 15}
+>>> client = Redis(**redis_kwargs, decode_responses=True)
+>>> gate = CallGate.from_file("gate_backup.json", storage="redis", redis_client=client) # Data is automatically written to Redis with new key format
+>>> gate.state
 ```
+
+> It's not recommended to insert `step 3` into your business logic as it will rewrite your actual data from the file contents on each restart.
 
 **Why keys changed:**
 - v1.x keys: `gate_name`, `gate_name:sum`, `gate_name:timestamp`
-- v2.0.0 keys: `{gate_name}`, `{gate_name}:sum`, `{gate_name}:timestamp`
+- v2.x keys: `{gate_name}`, `{gate_name}:sum`, `{gate_name}:timestamp`
 - Hash tags `{...}` ensure all keys for one gate are in the same Redis Cluster slot
 
 ### API Changes
@@ -99,7 +102,7 @@ gate = CallGate(
 )
 ```
 
-**After (v2.0.0):**
+**After (v2.x):**
 ```python
 from redis import Redis
 
