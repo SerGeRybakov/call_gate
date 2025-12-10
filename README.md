@@ -25,7 +25,7 @@
 > **If you're upgrading from v1.x with Redis storage**, you MUST migrate your data.  
 > Redis keys format has changed and old data will be **inaccessible** without migration.
 >
-> 👉 **[See Migration Guide](#️-migration-guide-v1x--v200)** for step-by-step instructions.
+> 👉 **[See Migration Guide](#️-migration-guide-v1x--v2x)** for step-by-step instructions.
 
 ---
 
