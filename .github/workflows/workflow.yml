@@ -41,7 +41,7 @@ jobs:
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 10
-          max_attempts: 3
+          max_attempts: 1
           retry_on: error
           command: poetry install --no-interaction --with=dev
 
@@ -96,20 +96,27 @@ jobs:
           retry_on: error
           command: poetry install --no-interaction --with=dev
 
-      - name: Run tests with retry
+      - name: Run tests with segfault detection + retry
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
           max_attempts: 3
           retry_on: error
           command: |
-            echo "🔍 Redis configuration:"
+            echo "Redis configuration:"
             echo "REDIS_HOST: localhost"
             echo "REDIS_PORT: 6379"
             echo "REDIS_DB: ${{ matrix.redis-db }}"
             echo "GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}"
-            echo "🚀 Starting tests..."
-            poetry run pytest -m "not cluster" -v --ignore=tests/cluster/ --retries=3
+            echo "Starting tests..."
+
+            bash -c "poetry run pytest -m 'not cluster' -v --ignore=tests/cluster/ --retries=3"
+            status=$?
+            if [ $status -ge 128 ]; then
+                echo "Process crashed (signal $((status-128)))."
+                exit 1
+            fi
+            exit $status
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
@@ -156,14 +163,20 @@ jobs:
           retry_on: error
           command: poetry install --no-interaction --with=dev
 
-      - name: Run tests with coverage and retry
+      - name: Run coverage tests with segfault detection
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
-          max_attempts: 1
+          max_attempts: 3
           retry_on: error
           command: |
-            poetry run pytest -m "not cluster" -v --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/cluster/ ./tests --retries=3
+            bash -c "poetry run pytest -m 'not cluster' -v --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/cluster/ ./tests --retries=3"
+            status=$?
+            if [ $status -ge 128 ]; then
+                echo 'Process crashed (signal '$((status-128))').'
+                exit 1
+            fi
+            exit $status
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
