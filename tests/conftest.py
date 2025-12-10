@@ -128,38 +128,44 @@ def cluster_manager():
     manager = ClusterManager()
 
     try:
-        # Ensure all nodes are running at start
-        running = manager.get_running_nodes()
-        if len(running) < 3:
-            manager.start_all_nodes()
+        # In GitHub Actions, skip container management - cluster is managed by systemctl
+        if not manager.github_actions:
+            # Ensure all nodes are running at start (local Docker Compose only)
+            running = manager.get_running_nodes()
+            if len(running) < 3:
+                manager.start_all_nodes()
 
-            # Wait for cluster to be ready
-            if not manager.wait_for_cluster_ready(timeout=30):
-                raise ConnectionError("Cluster not ready.")
+                # Wait for cluster to be ready
+                if not manager.wait_for_cluster_ready(timeout=30):
+                    raise ConnectionError("Cluster not ready.")
+        # In GitHub Actions, just verify cluster is available
+        elif not manager.wait_for_cluster_ready(timeout=30):
+            raise ConnectionError("Cluster not ready in GitHub Actions.")
 
         yield manager
 
     finally:
-        # GUARANTEED cleanup: ensure all nodes are running after test
-        try:
-            # Wait for cluster to stabilize before next test
-            running = manager.get_running_nodes()
-            if len(running) < 3:
-                print("🔧 Restoring all cluster nodes after test...")
-                manager.start_all_nodes()
-
-                if not manager.wait_for_cluster_ready(timeout=30):
-                    print("⚠️  Warning: Cluster not ready after cleanup")
-                else:
-                    print("✅ Cluster restored successfully")
-        except Exception as e:
-            print(f"❌ Failed to restore cluster: {e}")
-            # Try one more time
+        # GUARANTEED cleanup: ensure all nodes are running after test (local only)
+        if not manager.github_actions:
             try:
-                manager.start_all_nodes()
-                manager.wait_for_cluster_ready(timeout=15)
-            except Exception:
-                pass  # Final fallback
+                # Wait for cluster to stabilize before next test
+                running = manager.get_running_nodes()
+                if len(running) < 3:
+                    print("🔧 Restoring all cluster nodes after test...")
+                    manager.start_all_nodes()
+
+                    if not manager.wait_for_cluster_ready(timeout=30):
+                        print("⚠️  Warning: Cluster not ready after cleanup")
+                    else:
+                        print("✅ Cluster restored successfully")
+            except Exception as e:
+                print(f"❌ Failed to restore cluster: {e}")
+                # Try one more time
+                try:
+                    manager.start_all_nodes()
+                    manager.wait_for_cluster_ready(timeout=15)
+                except Exception:
+                    pass  # Final fallback
 
 
 @pytest.fixture(scope="function", params=storages)

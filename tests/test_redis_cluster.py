@@ -4,6 +4,7 @@ These tests verify CallGate behavior with Redis clusters, including fault tolera
 scenarios like node failures and recovery.
 """
 
+import os
 import time
 
 from datetime import timedelta
@@ -14,6 +15,13 @@ from call_gate import CallGate, GateStorageType
 from call_gate.errors import CallGateRedisConfigurationError
 from tests.cluster.utils import ClusterManager
 from tests.parameters import random_name
+
+
+# Skip fault tolerance tests in GitHub Actions (no container management support)
+SKIP_FAULT_TOLERANCE_IN_CI = pytest.mark.skipif(
+    os.getenv("GITHUB_ACTIONS") == "true",
+    reason="Fault tolerance tests require Docker container management, not available in GitHub Actions",
+)
 
 
 class TestRedisClusterBasic:
@@ -77,6 +85,7 @@ class TestRedisClusterBasic:
 class TestRedisClusterFaultTolerance:
     """Test Redis cluster fault tolerance scenarios."""
 
+    @SKIP_FAULT_TOLERANCE_IN_CI
     def test_single_node_failure(self, cluster_manager: ClusterManager):
         """Test CallGate behavior when one cluster node fails."""
         cluster_client = cluster_manager.get_cluster_client()
@@ -135,6 +144,7 @@ class TestRedisClusterFaultTolerance:
             except Exception:
                 pass
 
+    @SKIP_FAULT_TOLERANCE_IN_CI
     def test_node_recovery(self, cluster_manager: ClusterManager):
         """Test CallGate behavior during node recovery."""
         cluster_client = cluster_manager.get_cluster_client()
@@ -190,6 +200,7 @@ class TestRedisClusterFaultTolerance:
             except Exception:
                 pass
 
+    @SKIP_FAULT_TOLERANCE_IN_CI
     def test_multiple_node_failure(self, cluster_manager: ClusterManager):
         """Test CallGate behavior when multiple nodes fail."""
         cluster_client = cluster_manager.get_cluster_client()
@@ -239,6 +250,7 @@ class TestRedisClusterFaultTolerance:
             except Exception:
                 pass  # Cluster might be unstable
 
+    @SKIP_FAULT_TOLERANCE_IN_CI
     def test_full_cluster_failure_and_recovery(self, cluster_manager: ClusterManager):
         """Test CallGate behavior during full cluster failure and recovery."""
         cluster_client = cluster_manager.get_cluster_client()

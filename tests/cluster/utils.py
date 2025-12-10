@@ -14,16 +14,27 @@ class ClusterManager:
 
     def __init__(self):
         """Initialize the cluster manager."""
-        self.client = docker.from_env()
-        self.node_names = [
-            "call-gate-redis-cluster-node-1",
-            "call-gate-redis-cluster-node-2",
-            "call-gate-redis-cluster-node-3",
-        ]
-        self.init_container_name = "call-gate-redis-cluster-init"
+        self.github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+
+        # Only initialize Docker client if not in GitHub Actions
+        if not self.github_actions:
+            self.client = docker.from_env()
+            self.node_names = [
+                "call-gate-redis-cluster-node-1",
+                "call-gate-redis-cluster-node-2",
+                "call-gate-redis-cluster-node-3",
+            ]
+            self.init_container_name = "call-gate-redis-cluster-init"
+        else:
+            self.client = None
+            self.node_names = []
+            self.init_container_name = None
 
     def _get_container(self, container_name: str):
         """Get Docker container by name."""
+        if self.github_actions:
+            return None
+
         try:
             return self.client.containers.get(container_name)
         except docker.errors.NotFound:
@@ -40,9 +51,7 @@ class ClusterManager:
           redis-cluster-service
         - Docker Compose: Uses 3 nodes (7001-7003) from local setup
         """
-        github_actions = os.getenv("GITHUB_ACTIONS") == "true"
-
-        if github_actions:
+        if self.github_actions:
             # GitHub Actions environment - redis-cluster-service provides 6 nodes
             return [
                 ClusterNode("localhost", 7000),
@@ -87,6 +96,10 @@ class ClusterManager:
 
     def stop_node(self, node_index: int) -> None:
         """Stop a specific cluster node (0-2)."""
+        if self.github_actions:
+            print(f"⚠️  Skipping stop_node({node_index}) in GitHub Actions")
+            return
+
         if not 0 <= node_index <= 2:
             raise ValueError("Node index must be 0, 1, or 2")
 
@@ -100,6 +113,10 @@ class ClusterManager:
 
     def start_node(self, node_index: int) -> None:
         """Start a specific cluster node (0-2)."""
+        if self.github_actions:
+            print(f"⚠️  Skipping start_node({node_index}) in GitHub Actions")
+            return
+
         if not 0 <= node_index <= 2:
             raise ValueError("Node index must be 0, 1, or 2")
 
@@ -115,11 +132,19 @@ class ClusterManager:
 
     def stop_all_nodes(self) -> None:
         """Stop all cluster nodes."""
+        if self.github_actions:
+            print("⚠️  Skipping stop_all_nodes() in GitHub Actions")
+            return
+
         for i in range(3):
             self.stop_node(i)
 
     def start_all_nodes(self) -> None:
         """Start all cluster nodes and wait for them to be running."""
+        if self.github_actions:
+            print("⚠️  Skipping start_all_nodes() in GitHub Actions")
+            return
+
         print("🔧 Starting all cluster nodes...")
 
         for i in range(3):
@@ -144,6 +169,10 @@ class ClusterManager:
 
     def get_running_nodes(self) -> list[int]:
         """Get list of currently running node indices."""
+        if self.github_actions:
+            # In GitHub Actions, assume all nodes are running (managed by systemctl)
+            return [0, 1, 2, 3, 4, 5]
+
         running = []
         for i, name in enumerate(self.node_names):
             try:
@@ -161,13 +190,16 @@ class ClusterManager:
 
         while time.time() - start_time < timeout:
             try:
-                # First check that all nodes are running
-                running_nodes = self.get_running_nodes()
-                if len(running_nodes) < 3:
-                    print(f"Only {len(running_nodes)}/3 nodes running, waiting...")
-                    time.sleep(sleep_interval)
-                    sleep_interval = min(sleep_interval * 1.2, 2.0)
-                    continue
+                # First check that all nodes are running (skip in GitHub Actions)
+                if not self.github_actions:
+                    running_nodes = self.get_running_nodes()
+                    if len(running_nodes) < 3:
+                        print(f"Only {len(running_nodes)}/3 nodes running, waiting...")
+                        time.sleep(sleep_interval)
+                        sleep_interval = min(sleep_interval * 1.2, 2.0)
+                        continue
+                else:
+                    running_nodes = self.get_running_nodes()
 
                 # Then try to get a working client
                 client = self.get_cluster_client()
@@ -194,6 +226,10 @@ class ClusterManager:
 
     def wait_for_node_running(self, node_index: int, timeout: int = 30) -> bool:
         """Wait for a specific node to be running."""
+        if self.github_actions:
+            # In GitHub Actions, assume nodes are always running
+            return True
+
         if not 0 <= node_index <= 2:
             raise ValueError("Node index must be 0, 1, or 2")
 

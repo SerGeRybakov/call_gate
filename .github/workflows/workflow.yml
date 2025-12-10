@@ -109,7 +109,7 @@ jobs:
             echo "REDIS_DB: ${{ matrix.redis-db }}"
             echo "GITHUB_ACTIONS_REDIS_TIMEOUT: ${{ env.GITHUB_ACTIONS_REDIS_TIMEOUT }}"
             echo "🚀 Starting tests..."
-            poetry run pytest -m "not cluster" -v --tb=short --ignore=tests/cluster/
+            poetry run pytest -v --tb=short --ignore=tests/cluster/
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
@@ -163,7 +163,7 @@ jobs:
           max_attempts: 1
           retry_on: error
           command: |
-            poetry run pytest -m "not cluster" --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/cluster/ ./tests --retries=3
+            poetry run pytest --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/cluster/ ./tests --retries=3
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
