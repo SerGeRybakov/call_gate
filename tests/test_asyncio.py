@@ -5,7 +5,16 @@ from datetime import timedelta
 import pytest
 
 from call_gate import CallGate, FrameLimitError, GateLimitError
-from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
+from tests.parameters import (
+    GITHUB_ACTIONS_REDIS_TIMEOUT,
+    create_call_gate,
+    random_name,
+    storages,
+    xfail_marker,
+)
+
+
+LOCK_MODEL_STORAGES = ["simple", pytest.param("redis", marks=xfail_marker)]
 
 
 # ======================================================================
@@ -206,6 +215,33 @@ class TestCallGateAsyncio:
         try:
             with pytest.raises(FrameLimitError):
                 await gate.check_limits()
+        finally:
+            await gate.clear()
+
+    @pytest.mark.parametrize("storage", LOCK_MODEL_STORAGES)
+    async def test_check_limits_stale_window_async(self, storage):
+        gate = create_call_gate(
+            random_name(),
+            timedelta(milliseconds=150),
+            timedelta(milliseconds=50),
+            gate_limit=1,
+            frame_limit=1,
+            storage=storage,
+        )
+
+        await gate.update()
+        stale_dt = gate._current_step() - gate.frame_step * gate.frames
+        gate._current_dt = stale_dt
+        gate._data.set_timestamp(stale_dt)
+
+        try:
+            await gate.check_limits()
+
+            assert gate.sum == 0
+            assert gate.data == [0] * gate.frames
+            assert gate.current_frame.value == 0
+            assert gate.current_dt is None
+            assert gate._data.get_timestamp() is None
         finally:
             await gate.clear()
 
