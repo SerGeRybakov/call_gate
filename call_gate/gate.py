@@ -307,23 +307,27 @@ class CallGate:
         except Exception:  # noqa: S110
             pass  # Ignore errors during cleanup
 
+    def _data_unlocked(self) -> list:
+        return self._data.as_list()
+
     def as_dict(self) -> dict:
         """Serialize the gate to a dictionary.
 
         May be used for persisting the gate state.
         """
         with self._rlock:
-            return {
-                "name": self.name,
-                "gate_size": self.gate_size.total_seconds(),
-                "frame_step": self.frame_step.total_seconds(),
-                "gate_limit": self.gate_limit,
-                "frame_limit": self.frame_limit,
-                "timezone": self.timezone.key if self.timezone else None,
-                "storage": self.storage,
-                "_data": self.data,
-                "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
-            }
+            with self._lock:
+                return {
+                    "name": self._name,
+                    "gate_size": self._gate_size.total_seconds(),
+                    "frame_step": self._frame_step.total_seconds(),
+                    "gate_limit": self._gate_limit,
+                    "frame_limit": self._frame_limit,
+                    "timezone": self._timezone.key if self._timezone else None,
+                    "storage": self._storage.name,
+                    "_data": self._data_unlocked(),
+                    "_current_dt": self._current_dt.isoformat() if self._current_dt else None,
+                }
 
     def to_file(self, path: Union[str, Path]) -> None:
         """Save CallGate state to file.
@@ -376,7 +380,26 @@ class CallGate:
         remainder = current_time.timestamp() % self._frame_step.total_seconds()
         return current_time - timedelta(seconds=remainder)
 
-    def _refresh_frames(self) -> None:
+    def _sum_unlocked(self) -> int:
+        return self._data.sum
+
+    def _current_frame_unlocked(self) -> Frame:
+        current = self._current_dt if self._current_dt else self._current_step()
+        return Frame(current, self._data[0])
+
+    def _last_frame_unlocked(self) -> Frame:
+        current = self._current_dt if self._current_dt else self._current_step()
+        return Frame(
+            current - self._frame_step * (self._frames - 1),
+            self._data[self._frames - 1],
+        )
+
+    def _clear_unlocked(self) -> None:
+        self._data.clear()
+        self._data.clear_timestamp()
+        self._current_dt = None
+
+    def _refresh_frames_unlocked(self) -> None:
         current_step = self._current_step()
         if not self._current_dt:
             self._current_dt = current_step
@@ -384,11 +407,30 @@ class CallGate:
             return
         diff = int((current_step - self._current_dt) / self._frame_step)
         if diff >= self._frames:
-            self.clear()
+            self._clear_unlocked()
         elif diff > 0:
             self._data.slide(diff)
             self._current_dt = current_step
             self._data.set_timestamp(current_step)
+
+    def _refresh_frames(self) -> None:
+        with self._lock:
+            self._refresh_frames_unlocked()
+
+    def _check_limits_unlocked(self) -> None:
+        self._refresh_frames_unlocked()
+        sum_ = self._sum_unlocked()
+        current_value = self._current_frame_unlocked().value
+        if self._gate_limit and sum_ >= self._gate_limit:
+            raise GateLimitError(
+                f"Gate limit is reached: {self._gate_limit}",
+                self,
+            )
+        if self._frame_limit and current_value >= self._frame_limit:
+            raise FrameLimitError(
+                f"Frame limit is reached: {self._frame_limit}",
+                self,
+            )
 
     @dual
     def update(self, value: int = 1, throw: bool = False) -> None:
@@ -412,7 +454,8 @@ class CallGate:
             raise FrameLimitError(f"The passed value exceeds the set frame limit: {value} > {self.frame_limit}", self)
 
         with self._rlock:
-            self._refresh_frames()
+            with self._lock:
+                self._refresh_frames_unlocked()
             try:
                 self._data.atomic_update(value, self._frame_limit, self._gate_limit)
             except Exception as e:
@@ -423,7 +466,8 @@ class CallGate:
                         raise e
                 else:
                     while True:
-                        self._refresh_frames()
+                        with self._lock:
+                            self._refresh_frames_unlocked()
                         try:
                             self._data.atomic_update(value, self._frame_limit, self._gate_limit)
                             break
@@ -449,7 +493,7 @@ class CallGate:
     def data(self) -> list:
         """Get a copy of the data values."""
         with self._lock:
-            return self._data.as_list()
+            return self._data_unlocked()
 
     @property
     def state(self) -> State:
@@ -495,21 +539,19 @@ class CallGate:
     def sum(self) -> int:
         """Get the sum of all values in the gate."""
         with self._lock:
-            return self._data.sum
+            return self._sum_unlocked()
 
     @property
     def current_frame(self) -> Frame:
         """Get time and value of the current frame."""
         with self._lock:
-            current = self._current_dt if self._current_dt else self._current_step()
-            return Frame(current, self._data[0])
+            return self._current_frame_unlocked()
 
     @property
     def last_frame(self) -> Frame:
         """Get time and value of the last frame."""
         with self._lock:
-            current = self._current_dt if self._current_dt else self._current_step()
-            return Frame(current - self._frame_step * (self._frames - 1), self._data[self._frames - 1])
+            return self._last_frame_unlocked()
 
     @dual
     def check_limits(self) -> None:
@@ -517,14 +559,9 @@ class CallGate:
 
         :raises ThrottlingError: Raised if either the `gate_limit` or `frame_limit` is exceeded.
         """
-        sum_ = self.sum
-        current_value = self.current_frame.value
-        with self._lock:
-            self._refresh_frames()
-            if self._gate_limit and sum_ >= self._gate_limit:
-                raise GateLimitError(f"Gate limit is reached: {self._gate_limit}", self)
-            if self._frame_limit and current_value >= self._frame_limit:
-                raise FrameLimitError(f"Frame limit is reached: {self._frame_limit}", self)
+        with self._rlock:
+            with self._lock:
+                self._check_limits_unlocked()
 
     @dual
     def clear(self) -> None:
@@ -532,10 +569,9 @@ class CallGate:
 
         Removes all counters and sets gate sum to zero.
         """
-        with self._lock:
-            self._data.clear()
-            self._data.clear_timestamp()
-            self._current_dt = None
+        with self._rlock:
+            with self._lock:
+                self._clear_unlocked()
 
     def __call__(self, value: int = 1, *, throw: bool = False) -> _CallGateWrapper:
         """Gate instance decorator for functions and coroutines.
