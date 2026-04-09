@@ -2,13 +2,33 @@
 
 SHELL := /bin/bash
 
+help:
+	@echo "Available targets:"
+	@echo "  check - Run code quality checks (sort, format, lint, mypy)"
+	@echo "  coverage - Run tests with coverage report"
+	@echo "  tox - Run all tests across multiple Python versions"
+	@echo "  test - Run tests with default Python version"
+	@echo "  test-3.10 - Run tests with Python 3.10"
+	@echo "  test-3.11 - Run tests with Python 3.11"
+	@echo "  test-3.12 - Run tests with Python 3.12"
+	@echo "  test-3.13 - Run tests with Python 3.13"
+	@echo "  test-3.14 - Run tests with Python 3.14"
+	@echo "  test-cluster - Run cluster tests with default Python version"
+	@echo "  test-cluster-3.10 - Run cluster tests with Python 3.10"
+	@echo "  test-cluster-3.11 - Run cluster tests with Python 3.11"
+	@echo "  test-cluster-3.12 - Run cluster tests with Python 3.12"
+	@echo "  test-cluster-3.13 - Run cluster tests with Python 3.13"
+	@echo "  test-cluster-3.14 - Run cluster tests with Python 3.14"
+	@echo "  test-cluster-all - Run all cluster tests across multiple Python versions"
+	@echo "  all - Run all checks and tests"
+
 run_test = \
 	echo "======= TEST $(1) ======="; \
 	deactivate; \
 	source $(2)/bin/activate; \
 	docker compose down; \
 	docker compose up -d; \
-	sleep 10; \
+	sleep 15; \
 	pytest; \
 	docker compose down
 
@@ -18,7 +38,7 @@ run_cluster_test = \
 	source $(2)/bin/activate; \
 	docker compose down; \
 	docker compose up -d; \
-	sleep 10; \
+	sleep 15; \
 	pytest -m cluster tests/test_redis_cluster.py -v; \
 	docker compose down
 
@@ -70,7 +90,7 @@ coverage:
 	-@source .venv/bin/activate
 	docker compose down
 	docker compose up -d
-	sleep 10
+	sleep 15
 	pytest -m "not cluster" --cov=./call_gate --cov-branch --cov-report=xml --ignore=tests/test_asgi_wsgi.py --ignore=tests/cluster/ ./tests --retries=3
 	@echo "Find html report at ./tests/code_coverage/index.html"
 

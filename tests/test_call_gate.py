@@ -23,7 +23,11 @@ from tests.parameters import (
     get_redis_client_if_needed,
     random_name,
     storages,
+    xfail_marker,
 )
+
+
+LOCK_MODEL_STORAGES = ["simple", pytest.param("redis", marks=xfail_marker)]
 
 
 @pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
@@ -687,6 +691,89 @@ class TestCallGateLimits:
         try:
             with pytest.raises(FrameLimitError):
                 gate.check_limits()
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", LOCK_MODEL_STORAGES)
+    def test_check_limits_clears_stale_window_without_deadlock(self, storage):
+        gate = create_call_gate(
+            random_name(),
+            timedelta(milliseconds=150),
+            timedelta(milliseconds=50),
+            gate_limit=1,
+            frame_limit=1,
+            storage=storage,
+        )
+
+        gate.update()
+        stale_dt = gate._current_step() - gate.frame_step * gate.frames
+        gate._current_dt = stale_dt
+        gate._data.set_timestamp(stale_dt)
+
+        try:
+            gate.check_limits()
+
+            assert gate.sum == 0
+            assert gate.data == [0] * gate.frames
+            assert gate.current_frame.value == 0
+            assert gate.current_dt is None
+            assert gate._data.get_timestamp() is None
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", LOCK_MODEL_STORAGES)
+    def test_check_limits_refreshes_partially_before_check(self, storage):
+        gate = create_call_gate(
+            random_name(),
+            timedelta(milliseconds=150),
+            timedelta(milliseconds=50),
+            gate_limit=2,
+            frame_limit=1,
+            storage=storage,
+        )
+
+        gate.update()
+        stale_dt = gate._current_step() - gate.frame_step
+        gate._current_dt = stale_dt
+        gate._data.set_timestamp(stale_dt)
+
+        try:
+            gate.check_limits()
+
+            assert gate.sum == 1
+            assert gate.current_frame.value == 0
+            assert gate.data[0] == 0
+            assert sum(gate.data) == 1
+            assert gate.current_dt is not None
+            assert gate._data.get_timestamp() is not None
+        finally:
+            gate.clear()
+
+    @pytest.mark.parametrize("storage", LOCK_MODEL_STORAGES)
+    def test_self_locking_properties_and_clear_still_work(self, storage):
+        gate = create_call_gate(
+            random_name(),
+            timedelta(seconds=2),
+            timedelta(seconds=1),
+            storage=storage,
+        )
+
+        try:
+            gate.update(2)
+
+            assert gate.sum == 2
+            assert gate.data == [2, 0]
+            assert gate.current_frame.value == 2
+            assert gate.last_frame.value == 0
+            assert gate.current_dt is not None
+
+            gate.clear()
+
+            assert gate.sum == 0
+            assert gate.data == [0, 0]
+            assert gate.current_frame.value == 0
+            assert gate.last_frame.value == 0
+            assert gate.current_dt is None
         finally:
             gate.clear()
 
