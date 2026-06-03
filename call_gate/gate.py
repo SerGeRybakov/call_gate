@@ -111,12 +111,33 @@ class CallGate:
     :param frame_limit: Maximum value per frame (0 = no limit).
     :param timezone: Timezone name for timestamp handling.
     :param storage: Storage type from GateStorageType.
-    :param redis_client: Pre-initialized Redis/RedisCluster client for Redis storage.
+    :param redis_client: Pre-initialized Redis/RedisCluster client for Redis storage
+        (``decode_responses=True`` is required).
     """
 
     @staticmethod
     def _is_int(value: Any) -> bool:
         return value is not None and not isinstance(value, bool) and isinstance(value, int)
+
+    @staticmethod
+    def _redis_client_has_decode_responses(redis_client: Union[Redis, RedisCluster]) -> bool:
+        """Return True if the client's connection pool decodes responses to str."""
+        if isinstance(redis_client, Redis):
+            pool = getattr(redis_client, "connection_pool", None)
+            if pool is not None:
+                return bool(pool.connection_kwargs.get("decode_responses"))
+            return False
+        if isinstance(redis_client, RedisCluster):
+            nodes_manager = getattr(redis_client, "nodes_manager", None)
+            if nodes_manager is not None:
+                for node in nodes_manager.nodes_cache.values():
+                    conn = getattr(node, "redis_connection", None)
+                    if conn is not None:
+                        pool = getattr(conn, "connection_pool", None)
+                        if pool is not None and pool.connection_kwargs.get("decode_responses"):
+                            return True
+            return False
+        return False
 
     def _validate_redis_configuration(
         self, redis_client: Optional[Union[Redis, RedisCluster]], storage: GateStorageModeType
@@ -137,11 +158,16 @@ class CallGate:
                     f"Received type: {type(redis_client)}."
                 )
 
-            # Perform ping test if redis_client is provided
             try:
                 redis_client.ping()
             except Exception as e:
                 raise CallGateRedisConfigurationError(f"Failed to connect to Redis: {e}") from e
+
+            if not self._redis_client_has_decode_responses(redis_client):
+                raise CallGateRedisConfigurationError(
+                    "Redis client must have decode_responses=True. "
+                    "Pass decode_responses=True when creating the Redis or RedisCluster client."
+                )
 
     @staticmethod
     def _validate_and_set_gate_and_granularity(gate_size: Any, step: Any) -> tuple[timedelta, timedelta]:
@@ -380,6 +406,11 @@ class CallGate:
         remainder = current_time.timestamp() % self._frame_step.total_seconds()
         return current_time - timedelta(seconds=remainder)
 
+    def _align_to_frame_step(self, dt: datetime) -> datetime:
+        """Floor *dt* to the start of its frame step (same grid as ``_current_step``)."""
+        remainder = dt.timestamp() % self._frame_step.total_seconds()
+        return dt - timedelta(seconds=remainder)
+
     def _sum_unlocked(self) -> int:
         return self._data.sum
 
@@ -399,12 +430,32 @@ class CallGate:
         self._data.clear_timestamp()
         self._current_dt = None
 
+    def _sync_current_dt_from_storage(self) -> None:
+        """Align local window position with storage timestamp."""
+        if isinstance(self._data, SimpleStorage):
+            return
+        stored = self._data.get_timestamp()
+        if stored is None:
+            return
+        stored = self._align_to_frame_step(stored)
+        if self._current_dt is not None:
+            self._current_dt = max(self._current_dt, stored)
+        else:
+            self._current_dt = stored
+
     def _refresh_frames_unlocked(self) -> None:
+        """Shift the sliding window to match the current time step.
+
+        For Redis storage, local ``_current_dt`` is synced from the storage
+        timestamp before computing ``diff``, so multiple processes/pods sharing
+        the same gate cannot double-slide and lose ``sum``.
+        """
         current_step = self._current_step()
         if not self._current_dt:
             self._current_dt = current_step
             self._data.set_timestamp(current_step)
             return
+        self._sync_current_dt_from_storage()
         diff = int((current_step - self._current_dt) / self._frame_step)
         if diff >= self._frames:
             self._clear_unlocked()

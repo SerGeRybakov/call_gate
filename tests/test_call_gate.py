@@ -537,7 +537,7 @@ class TestCallGateUpdate:
         finally:
             call_gate_2s_1s_no_limits.clear()
 
-    @pytest.mark.flaky(retries=3, delay=1)
+    # @pytest.mark.flaky(retries=3, delay=1)
     def test_increment_replaces_old_data(self, call_gate_2s_1s_no_limits):
         work = 1.6
         start = datetime.now()

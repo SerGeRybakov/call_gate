@@ -562,11 +562,9 @@ class RedisStorage(BaseStorage):
         lua_script = """
         local key_list = KEYS[1]
         local key_sum = KEYS[2]
-        local key_timestamp = KEYS[3]
         local inc_value = tonumber(ARGV[1])
         local frame_limit = tonumber(ARGV[2])
         local gate_limit = tonumber(ARGV[3])
-        local timestamp = ARGV[4]
         local current_value = tonumber(redis.call("LINDEX", key_list, 0) or "0")
         local new_value = current_value + inc_value
         local current_sum = tonumber(redis.call("GET", key_sum) or "0")
@@ -585,22 +583,17 @@ class RedisStorage(BaseStorage):
         end
         redis.call("LSET", key_list, 0, new_value)
         redis.call("SET", key_sum, new_sum)
-        redis.call("SET", key_timestamp, timestamp)
         return new_value
         """
         try:
-            # Get current timestamp for atomic update
-            current_timestamp = datetime.now().isoformat()
             self._client.eval(
                 lua_script,
-                3,
+                2,
                 self._data,
                 self._sum,
-                self._timestamp,
                 str(value),
                 str(frame_limit),
                 str(gate_limit),
-                current_timestamp,
             )
         except ResponseError as e:
             error_message = str(e)
@@ -614,6 +607,15 @@ class RedisStorage(BaseStorage):
                 raise FrameOverflowError("Frame value must be >= 0.") from e
             raise e
 
+    @staticmethod
+    def _decode_redis_str(value: Any) -> Optional[str]:
+        """Normalize Redis GET result to str (cluster/spawn may return bytes)."""
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode()
+        return str(value)
+
     def get_timestamp(self) -> Optional[datetime]:
         """Get the last update timestamp from storage.
 
@@ -621,7 +623,7 @@ class RedisStorage(BaseStorage):
         """
         with self._rlock:
             with self._lock:
-                ts_str: str = self._client.get(self._timestamp)
+                ts_str = self._decode_redis_str(self._client.get(self._timestamp))
                 if ts_str:
                     return datetime.fromisoformat(ts_str)
                 return None

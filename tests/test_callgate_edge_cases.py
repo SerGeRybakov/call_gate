@@ -98,6 +98,25 @@ class TestCallGateConfigurationEdgeCases:
                 storage="redis",
             )
 
+    def test_redis_client_without_decode_responses_raises_error(self):
+        """Redis client must be created with decode_responses=True."""
+        redis_kwargs = get_redis_kwargs()
+        redis_kwargs["decode_responses"] = False
+        redis_client = Redis(**redis_kwargs)
+        redis_client.ping()
+
+        with pytest.raises(
+            CallGateRedisConfigurationError,
+            match="decode_responses=True",
+        ):
+            CallGate(
+                random_name(),
+                timedelta(seconds=1),
+                timedelta(milliseconds=100),
+                storage=GateStorageType.redis,
+                redis_client=redis_client,
+            )
+
 
 if __name__ == "__main__":
     pytest.main()
