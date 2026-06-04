@@ -871,6 +871,7 @@ class TestCallGatePersistenceAndRefresh:
             restored.__setstate__(state)
             assert restored._lock is None
             assert restored._rlock is None
+            assert restored._logger.name == gate._logger.name
             assert restored.sum == expected_sum
             restored.update(2)
             assert restored._lock is not None

@@ -9,7 +9,7 @@ import pickle
 import threading
 import time
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -517,8 +517,6 @@ class TestRedisStorageSerialization:
 
     def test_restore_cluster_client_from_serialized_nodes(self):
         """Cluster client is rebuilt from serialized startup_nodes."""
-        from unittest.mock import patch
-
         client_state = {"startup_nodes": [{"host": "127.0.0.1", "port": 7001}]}
         mock_instance = MagicMock()
         with patch("call_gate.storages.redis.RedisCluster", return_value=mock_instance) as cluster_cls:
