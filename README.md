@@ -340,6 +340,77 @@ await gate.update(
       )
 ```
 
+#### ``throw=False``: automatic retry and ``gate_limit_max_wait_frames``
+This feature avoids infinite waiting in case of rate-limiting.
+
+By default (``throw=False``), if an increment hits ``FrameLimitError`` or ``GateLimitError``, the gate:
+
+1. sleeps one ``frame_step`` (one **frame** of the sliding window);
+2. refreshes the sliding window;
+3. retries the same ``update`` call.
+
+This repeats until the increment succeeds or the limit on waiting is reached — then
+``FrameLimitError`` / ``GateLimitError`` is raised.
+
+##### What the number means
+
+``gate_limit_max_wait_frames`` is passed on each ``update`` / ``gate(...)`` call.
+
+**The value is a frame count** — how many **frames** the call may wait through before giving up.
+One frame = one ``frame_step`` sleep and one window shift. 
+
+| ``gate_limit_max_wait_frames`` | Frames to wait | Wall time (worst case) |
+|--------------------------------|----------------|-------------------------|
+| ``0`` (default) | all ``frames`` in the gate (= one full window) | ``gate_size`` |
+| ``N > 0`` | at most ``N`` frames | ``N × frame_step`` |
+
+For ``CallGate("api", gate_size=10, frame_step=1)``: ``frames == 10``, each frame is 1 second.
+``gate_limit_max_wait_frames=3`` → wait through at most **3 frames** (~3 seconds), then ``raise``.
+Default ``0`` → wait through all **10 frames** (~10 seconds), then ``raise``.
+
+``FrameLimitError`` and ``GateLimitError`` **share** the same frame counter during one ``update``.
+
+**No waiting when:**
+
+- ``throw=True`` — first limit error is raised immediately; this parameter is ignored.
+- ``value > frame_limit`` or ``value > gate_limit`` (if set) — raised immediately; waiting cannot help.
+
+```python
+gate = CallGate("api", 10, 1, gate_limit=100)  # 10 frames × 1s
+
+gate.update(2)  # default 0 → wait up to 10 frames (full gate_size)
+
+gate.update(1, gate_limit_max_wait_frames=2)  # wait up to 2 frames (~2s), then raise
+
+@gate(1, gate_limit_max_wait_frames=2)
+def handler():
+    ...
+
+with gate(1, gate_limit_max_wait_frames=2):
+    ...
+```
+
+### Logging
+
+Each gate uses a logger named ``CallGate.<gate_name>``. By default no handler is attached
+(``log_level=None``). Pass correspondent value to ``log_level`` to emit logs from this instance:
+
+```python
+gate1 = CallGate("gate1", 24 * 3600, 60)  # No logs
+gate2 = CallGate("gate2", 24 * 3600, 60, log_level=logging.DEBUG)  # All logs
+gate3 = CallGate("gate3", 24 * 3600, 60, log_level="INFO")  # Some logs
+gate4 = CallGate("gate4", 24 * 3600, 60, log_level="warning")  # Few logs
+```
+
+| Level | When |
+|-------|------|
+| **DEBUG** | Retry sleeps, window slide/clear |
+| **INFO** | Every successful ``update``; full window clear |
+| **WARNING** | Wait budget exhausted, about to ``raise`` |
+
+Optional ``log_format`` sets the ``StreamHandler`` formatter (default: ``%(levelname)s %(asctime)s %(name)s %(message)s``).
+Logging options are not stored in ``as_dict`` / ``from_file``.
+
 ### Use as a Decorator
 
 You can also use the gate as a decorator for functions and coroutines:

@@ -18,6 +18,7 @@ Optional dependencies:
 
 import inspect
 import json
+import logging
 import time
 
 from datetime import datetime, timedelta
@@ -33,7 +34,6 @@ from call_gate.errors import (
     FrameLimitError,
     GateLimitError,
     SpecialCallGateError,
-    ThrottlingError,
 )
 from call_gate.storages.base_storage import BaseStorage, get_global_manager
 from call_gate.storages.shared import SharedMemoryStorage
@@ -65,6 +65,15 @@ except ImportError:
     Redis = Sentinel
     RedisCluster = Sentinel
     RedisStorage = Sentinel
+
+_DEFAULT_LOG_FORMAT = "%(levelname)s %(asctime)s %(name)s %(message)s"
+_LOG_LEVEL_BY_NAME = {
+    "CRITICAL": logging.CRITICAL,
+    "ERROR": logging.ERROR,
+    "WARNING": logging.WARNING,
+    "INFO": logging.INFO,
+    "DEBUG": logging.DEBUG,
+}
 
 
 class CallGate:
@@ -113,6 +122,10 @@ class CallGate:
     :param storage: Storage type from GateStorageType.
     :param redis_client: Pre-initialized Redis/RedisCluster client for Redis storage
         (``decode_responses=True`` is required).
+    :param log_level: Logging level (``str`` name or ``int`` constant). ``None`` (default) leaves
+        the logger without a dedicated handler. Pass ``"INFO"``, ``logging.DEBUG``, etc. to attach
+        a ``StreamHandler`` on this instance.
+    :param log_format: ``logging.Formatter`` pattern when ``log_level`` is set.
     """
 
     @staticmethod
@@ -220,6 +233,21 @@ class CallGate:
         return gate_limit, frame_limit
 
     @staticmethod
+    def _setup_logger(name: str, log_level: Optional[Union[str, int]], log_format: str) -> None:
+        """Configure ``CallGate.{name}`` when *log_level* is set (not stored on the instance)."""
+        if log_level is None:
+            return
+        logger = logging.getLogger(f"CallGate.{name}")
+        level = CallGate._normalize_log_level(log_level)
+        logger.setLevel(level)
+        handler = logging.StreamHandler()
+        handler.setLevel(level)
+        handler.setFormatter(logging.Formatter(log_format))
+        logger.handlers.clear()
+        logger.addHandler(handler)
+        logger.propagate = False
+
+    @staticmethod
     def _validate_and_set_timestamp(timestamp: Any) -> Optional[datetime]:
         if timestamp is not None:
             if not isinstance(timestamp, str):
@@ -251,9 +279,12 @@ class CallGate:
         redis_client: Optional[Union[Redis, RedisCluster]] = None,
         redis_lock_timeout: int = 5,
         redis_lock_blocking_timeout: int = 5,
+        log_level: Optional[Union[str, int]] = None,
+        log_format: str = _DEFAULT_LOG_FORMAT,
         _data: Optional[Union[list[int], tuple[int, ...]]] = None,
         _current_dt: Optional[str] = None,
     ) -> None:
+        self._setup_logger(name, log_level, log_format)
         manager = get_global_manager()
         self._lock = manager.Lock()
         self._rlock = manager.RLock()
@@ -333,6 +364,36 @@ class CallGate:
         except Exception:  # noqa: S110
             pass  # Ignore errors during cleanup
 
+    @staticmethod
+    def _validate_gate_limit_max_wait_frames(gate_limit_max_wait_frames: Any) -> int:
+        if not CallGate._is_int(gate_limit_max_wait_frames):
+            raise CallGateTypeError("gate_limit_max_wait_frames must be an integer.")
+        if gate_limit_max_wait_frames < 0:
+            raise CallGateValueError("gate_limit_max_wait_frames must be >= 0.")
+        return gate_limit_max_wait_frames
+
+    @staticmethod
+    def _normalize_log_level(level: Union[str, int]) -> int:
+        if isinstance(level, int):
+            return level
+        if isinstance(level, str):
+            normalized = _LOG_LEVEL_BY_NAME.get(level.upper())
+            if normalized is not None:
+                return normalized
+        raise CallGateValueError(f"Invalid log level: {level!r}.")
+
+    @property
+    def _logger(self) -> logging.Logger:
+        return logging.getLogger(f"CallGate.{self._name}")
+
+    def _ensure_process_locks(self) -> None:
+        """Create manager locks if missing (after unpickling; not created in ``__setstate__``)."""
+        if self._lock is not None and self._rlock is not None:
+            return
+        manager = get_global_manager()
+        self._lock = manager.Lock()
+        self._rlock = manager.RLock()
+
     def _data_unlocked(self) -> list:
         return self._data.as_list()
 
@@ -341,6 +402,7 @@ class CallGate:
 
         May be used for persisting the gate state.
         """
+        self._ensure_process_locks()
         with self._rlock:
             with self._lock:
                 return {
@@ -458,13 +520,77 @@ class CallGate:
         self._sync_current_dt_from_storage()
         diff = int((current_step - self._current_dt) / self._frame_step)
         if diff >= self._frames:
+            self._logger.info(
+                "Clearing sliding window (diff=%s, frames=%s)",
+                diff,
+                self._frames,
+            )
             self._clear_unlocked()
         elif diff > 0:
+            self._logger.debug("Sliding window by %s frame(s)", diff)
             self._data.slide(diff)
             self._current_dt = current_step
             self._data.set_timestamp(current_step)
 
+    def _log_update_succeeded(self, value: int, waits_used: int = 0) -> None:
+        sum_ = self.sum
+        if waits_used:
+            self._logger.info(
+                "Update succeeded after %s wait(s), value=%s, sum=%s",
+                waits_used,
+                value,
+                sum_,
+            )
+        else:
+            self._logger.info("Update succeeded, value=%s, sum=%s", value, sum_)
+
+    def _effective_max_wait_frames(self, gate_limit_max_wait_frames: int) -> int:
+        if gate_limit_max_wait_frames > 0:
+            return gate_limit_max_wait_frames
+        return self._frames
+
+    def _update_blocking_unlocked(self, value: int, gate_limit_max_wait_frames: int) -> None:
+        self._ensure_process_locks()
+        waits_left = self._effective_max_wait_frames(gate_limit_max_wait_frames)
+        initial_waits = waits_left
+        while True:
+            with self._lock:
+                self._refresh_frames_unlocked()
+            try:
+                self._data.atomic_update(value, self._frame_limit, self._gate_limit)
+                self._log_update_succeeded(value, initial_waits - waits_left)
+                return
+            except FrameLimitError:
+                if waits_left <= 0:
+                    self._logger.warning(
+                        "Frame limit still exceeded after %s wait(s), raising",
+                        initial_waits,
+                    )
+                    raise FrameLimitError("Frame limit exceeded", self) from None
+                self._logger.debug(
+                    "Frame limit reached, sleeping one frame step (waits_left=%s, value=%s)",
+                    waits_left,
+                    value,
+                )
+                waits_left -= 1
+                time.sleep(self.frame_step.total_seconds())
+            except GateLimitError:
+                if waits_left <= 0:
+                    self._logger.warning(
+                        "Gate limit still exceeded after %s wait(s), raising",
+                        initial_waits,
+                    )
+                    raise GateLimitError("Gate limit exceeded", self) from None
+                self._logger.debug(
+                    "Gate limit reached, sleeping one frame step (waits_left=%s, value=%s)",
+                    waits_left,
+                    value,
+                )
+                waits_left -= 1
+                time.sleep(self.frame_step.total_seconds())
+
     def _refresh_frames(self) -> None:
+        self._ensure_process_locks()
         with self._lock:
             self._refresh_frames_unlocked()
 
@@ -484,7 +610,7 @@ class CallGate:
             )
 
     @dual
-    def update(self, value: int = 1, throw: bool = False) -> None:
+    def update(self, value: int = 1, throw: bool = False, gate_limit_max_wait_frames: int = 0) -> None:
         """Update the counter in the current frame and gate sum.
 
         It is possible to update the gate with a custom **positive** value.
@@ -495,7 +621,13 @@ class CallGate:
         because neither the gate sum nor the frame value can be negative.
 
         :param value: The value to add to the current frame value.
-        :param throw: If True, the method will raise an exception if the limit is exceeded.
+        :param throw: If True, raise ``FrameLimitError`` or ``GateLimitError`` as soon as the
+            limit is exceeded. If False, sleep ``frame_step`` and refresh the window until the
+            increment can be applied.
+        :param gate_limit_max_wait_frames: When ``throw=False``, how many **frames** (``frame_step``
+            periods) the call may wait through on limit errors before raising. ``0`` (default) means
+            all ``frames`` in the gate — one full ``gate_size``. ``N > 0`` — at most ``N`` frames
+            (~``N × frame_step`` wall time). Not a second count; not ``gate_limit``.
         """
         if not self._is_int(value):
             raise CallGateTypeError("Value must be an integer.")
@@ -503,27 +635,24 @@ class CallGate:
             return  # return early as there's nothing to do
         if value > self.frame_limit > 0:
             raise FrameLimitError(f"The passed value exceeds the set frame limit: {value} > {self.frame_limit}", self)
+        if value > self._gate_limit > 0:
+            raise GateLimitError(f"The passed value exceeds the set gate limit: {value} > {self._gate_limit}", self)
+        max_wait = self._validate_gate_limit_max_wait_frames(gate_limit_max_wait_frames)
 
+        self._ensure_process_locks()
         with self._rlock:
-            with self._lock:
-                self._refresh_frames_unlocked()
-            try:
-                self._data.atomic_update(value, self._frame_limit, self._gate_limit)
-            except Exception as e:
-                if throw:
+            if throw:
+                with self._lock:
+                    self._refresh_frames_unlocked()
+                try:
+                    self._data.atomic_update(value, self._frame_limit, self._gate_limit)
+                except Exception as e:
                     if isinstance(e, SpecialCallGateError):
                         raise e.__class__(e.message, self) from e
-                    else:
-                        raise e
-                else:
-                    while True:
-                        with self._lock:
-                            self._refresh_frames_unlocked()
-                        try:
-                            self._data.atomic_update(value, self._frame_limit, self._gate_limit)
-                            break
-                        except ThrottlingError:
-                            time.sleep(self.frame_step.total_seconds())
+                    raise e
+                self._log_update_succeeded(value)
+            else:
+                self._update_blocking_unlocked(value, max_wait)
 
     @property
     def name(self) -> str:
@@ -543,6 +672,7 @@ class CallGate:
     @property
     def data(self) -> list:
         """Get a copy of the data values."""
+        self._ensure_process_locks()
         with self._lock:
             return self._data_unlocked()
 
@@ -589,18 +719,21 @@ class CallGate:
     @property
     def sum(self) -> int:
         """Get the sum of all values in the gate."""
+        self._ensure_process_locks()
         with self._lock:
             return self._sum_unlocked()
 
     @property
     def current_frame(self) -> Frame:
         """Get time and value of the current frame."""
+        self._ensure_process_locks()
         with self._lock:
             return self._current_frame_unlocked()
 
     @property
     def last_frame(self) -> Frame:
         """Get time and value of the last frame."""
+        self._ensure_process_locks()
         with self._lock:
             return self._last_frame_unlocked()
 
@@ -610,6 +743,7 @@ class CallGate:
 
         :raises ThrottlingError: Raised if either the `gate_limit` or `frame_limit` is exceeded.
         """
+        self._ensure_process_locks()
         with self._rlock:
             with self._lock:
                 self._check_limits_unlocked()
@@ -620,21 +754,47 @@ class CallGate:
 
         Removes all counters and sets gate sum to zero.
         """
+        self._ensure_process_locks()
         with self._rlock:
             with self._lock:
                 self._clear_unlocked()
 
-    def __call__(self, value: int = 1, *, throw: bool = False) -> _CallGateWrapper:
+    def __call__(
+        self,
+        value: int = 1,
+        *,
+        throw: bool = False,
+        gate_limit_max_wait_frames: int = 0,
+    ) -> _CallGateWrapper:
         """Gate instance decorator for functions and coroutines.
 
+        Equivalent to ``update(value, throw, gate_limit_max_wait_frames)`` on each use.
+
         :param value: The value to add to the current frame value.
-        :param throw: If True, the method will raise an exception if the limit is exceeded.
+        :param throw: If True, raise when a limit is exceeded; see ``update``.
+        :param gate_limit_max_wait_frames: Max **frames** to wait through on limit when
+            ``throw=False``; see ``update``.
         """
-        return _CallGateWrapper(self, value, throw)
+        max_wait = self._validate_gate_limit_max_wait_frames(gate_limit_max_wait_frames)
+        return _CallGateWrapper(self, value, throw, max_wait)
 
     def __len__(self) -> int:
         """Get current number of the gate existing frames."""
         return self._frames
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        for key in ("_lock", "_rlock", "_alock", "_executor", "_loop"):
+            state.pop(key, None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._lock = None
+        self._rlock = None
+        self._alock = None
+        self._executor = None
+        self._loop = None
 
     def __repr__(self) -> str:
         """Gate representation."""
