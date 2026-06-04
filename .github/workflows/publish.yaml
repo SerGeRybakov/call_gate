@@ -21,33 +21,52 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Extract version from tag
-        id: get_version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Extracted version: $VERSION"
-
-      - name: Validate semver (with optional postfix)
-        run: |
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)*)?$ ]]; then
-            echo "❌ Invalid version format: $VERSION"
-            exit 1
-          fi
-
-      - name: Check pyproject.toml version
-        run: |
-          PYPROJECT_VERSION=$(grep -oP '(?<=^version = ")[^"]+' pyproject.toml)
-          if [[ "$PYPROJECT_VERSION" != "$VERSION" ]]; then
-            echo "❌ Version mismatch: pyproject.toml has version $PYPROJECT_VERSION, but tag is $VERSION"
-            exit 1
-          fi
-          echo "✅ Version check passed: pyproject.toml ($PYPROJECT_VERSION) matches tag ($VERSION)"
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Extracted version: $VERSION"
+
+      - name: Validate version (PEP 440)
+        run: |
+          python -m pip install --quiet packaging
+          python - <<'PY'
+          import os
+          import sys
+          from packaging.version import InvalidVersion, Version
+
+          version = os.environ["VERSION"]
+          try:
+              Version(version)
+          except InvalidVersion as exc:
+              print(f"❌ Invalid version format: {version} ({exc})")
+              sys.exit(1)
+          print(f"✅ Version format valid (PEP 440): {version}")
+          PY
+
+      - name: Check pyproject.toml version
+        run: |
+          PYPROJECT_VERSION=$(grep -oP '(?<=^version = ")[^"]+' pyproject.toml)
+          python - <<PY
+          import sys
+          from packaging.version import Version
+
+          tag = Version("${{ env.VERSION }}")
+          pyproject = Version("$PYPROJECT_VERSION")
+          if tag != pyproject:
+              print(
+                  f"❌ Version mismatch: pyproject.toml has {pyproject}, but tag is {tag}"
+              )
+              sys.exit(1)
+          print(f"✅ Version check passed: pyproject.toml ({pyproject}) matches tag ({tag})")
+          PY
 
       - name: Install Poetry
         run: |
@@ -64,13 +83,22 @@ jobs:
       - name: Verify sdist version
         run: |
           SDIST_FILE=$(ls dist/*.tar.gz | head -n 1)
-          SDIST_VERSION=$(echo "$SDIST_FILE" | grep -oP '(?<=-)[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)*)?(?=.tar.gz)')
-          
-          if [[ "$SDIST_VERSION" != "$VERSION" ]]; then
-            echo "❌ Version mismatch: sdist file $SDIST_FILE does not exactly match tag version $VERSION"
-            exit 1
-          fi
-          echo "✅ Version check passed: $SDIST_FILE"
+          PKG_INFO=$(tar -tzf "$SDIST_FILE" | grep '/PKG-INFO$' | head -n 1)
+          SDIST_VERSION=$(tar -xOf "$SDIST_FILE" "$PKG_INFO" | grep '^Version:' | awk '{print $2}')
+          python - <<PY
+          import sys
+          from packaging.version import Version
+
+          tag = Version("${{ env.VERSION }}")
+          built = Version("$SDIST_VERSION")
+          if tag != built:
+              print(
+                  f"❌ Version mismatch: PKG-INFO has {built}, but tag is {tag} "
+                  f"(sdist: $SDIST_FILE)"
+              )
+              sys.exit(1)
+          print(f"✅ Version check passed: {built} ($SDIST_FILE)")
+          PY
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
