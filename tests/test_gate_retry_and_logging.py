@@ -1,3 +1,5 @@
+import logging
+
 from unittest.mock import patch
 
 import pytest
@@ -38,6 +40,13 @@ class TestLogLevelInit:
         gate = CallGate(random_name(), 10, 1, log_level=None)
         assert gate._logger.name.startswith("CallGate.")
         assert len(gate._logger.handlers) == 0
+        gate.clear()
+
+    def test_log_level_accepts_logging_constant(self):
+        gate = CallGate(random_name(), 10, 1, log_level=logging.DEBUG)
+        assert len(gate._logger.handlers) == 1
+        assert gate._logger.level == logging.DEBUG
+        assert gate._logger.handlers[0].level == logging.DEBUG
         gate.clear()
 
 
@@ -128,6 +137,15 @@ class TestUpdateRetryBudget:
                     gate.update(gate_limit_max_wait_frames=0)
         assert len(sleeps) == gate.frames
         assert all(s == gate.frame_step.total_seconds() for s in sleeps)
+        gate.clear()
+
+    def test_raises_after_frame_limit_waits_exhausted(self, capsys):
+        gate = CallGate(random_name(), 10, 1, frame_limit=1, log_level="WARNING")
+        gate.update(1)
+        with patch("call_gate.gate.time.sleep"):
+            with pytest.raises(FrameLimitError):
+                gate.update(1, throw=False, gate_limit_max_wait_frames=1)
+        assert "raising" in capsys.readouterr().err
         gate.clear()
 
     def test_succeeds_after_waits(self):

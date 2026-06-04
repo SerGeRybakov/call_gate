@@ -1,10 +1,19 @@
 """Test edge cases for CallGate configuration to improve coverage."""
 
+import builtins
+
 from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from redis import Redis
+
+
+try:
+    from redis import RedisCluster
+except ImportError:
+    RedisCluster = None  # type: ignore[misc, assignment]
 
 from call_gate import CallGate, GateStorageType
 from call_gate.errors import (
@@ -116,6 +125,60 @@ class TestCallGateConfigurationEdgeCases:
                 storage=GateStorageType.redis,
                 redis_client=redis_client,
             )
+
+    def test_redis_standalone_client_without_pool_fails_decode_check(self):
+        """Standalone Redis client without connection pool cannot prove decode_responses."""
+        mock_client = MagicMock(spec=Redis)
+        mock_client.connection_pool = None
+        mock_client.ping.return_value = True
+
+        assert CallGate._redis_client_has_decode_responses(mock_client) is False
+
+        with pytest.raises(
+            CallGateRedisConfigurationError,
+            match="decode_responses=True",
+        ):
+            CallGate(
+                random_name(),
+                timedelta(seconds=1),
+                timedelta(milliseconds=100),
+                storage=GateStorageType.redis,
+                redis_client=mock_client,
+            )
+
+    @pytest.mark.skipif(RedisCluster is None, reason="redis cluster not available")
+    def test_redis_cluster_client_without_decode_responses_fails(self):
+        """RedisCluster without decode_responses on any node pool is rejected."""
+        mock_cluster = MagicMock()
+        mock_cluster.ping.return_value = True
+        mock_node = MagicMock()
+        mock_node.redis_connection.connection_pool.connection_kwargs = {"decode_responses": False}
+        mock_cluster.nodes_manager.nodes_cache = {"node": mock_node}
+
+        def isinstance_side_effect(obj, cls):
+            if obj is mock_cluster:
+                if cls is RedisCluster:
+                    return True
+                if isinstance(cls, tuple):
+                    return any(c is RedisCluster for c in cls)
+                if cls is Redis:
+                    return False
+            return builtins.isinstance(obj, cls)
+
+        with patch("call_gate.gate.isinstance", side_effect=isinstance_side_effect):
+            assert CallGate._redis_client_has_decode_responses(mock_cluster) is False
+
+            with pytest.raises(
+                CallGateRedisConfigurationError,
+                match="decode_responses=True",
+            ):
+                CallGate(
+                    random_name(),
+                    timedelta(seconds=1),
+                    timedelta(milliseconds=100),
+                    storage=GateStorageType.redis,
+                    redis_client=mock_cluster,
+                )
 
 
 if __name__ == "__main__":

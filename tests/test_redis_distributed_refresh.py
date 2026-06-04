@@ -336,3 +336,52 @@ class TestSharedDistributedRefreshMultiprocess:
                 if p.is_alive():
                     p.terminate()
             gate.clear()
+
+
+@pytest.mark.timeout(GITHUB_ACTIONS_REDIS_TIMEOUT)
+class TestTimestampSyncBehavior:
+    def test_sync_skips_when_storage_has_no_timestamp(self):
+        redis_client = create_redis_client()
+        gate_name = random_name()
+        gate = CallGate(
+            gate_name,
+            gate_size=timedelta(seconds=10),
+            frame_step=timedelta(seconds=1),
+            storage=GateStorageType.redis,
+            redis_client=redis_client,
+        )
+        try:
+            local_dt = datetime(2026, 6, 1, 12, 0, 0)
+            gate._current_dt = local_dt
+            gate._data.clear_timestamp()
+            gate._sync_current_dt_from_storage()
+            assert gate._current_dt == local_dt
+        finally:
+            gate.clear()
+
+    def test_sync_adopts_storage_timestamp_when_local_cursor_missing(self):
+        redis_client = create_redis_client()
+        gate_name = random_name()
+        writer = CallGate(
+            gate_name,
+            gate_size=timedelta(seconds=10),
+            frame_step=timedelta(seconds=1),
+            storage=GateStorageType.redis,
+            redis_client=redis_client,
+        )
+        reader = CallGate(
+            gate_name,
+            gate_size=timedelta(seconds=10),
+            frame_step=timedelta(seconds=1),
+            storage=GateStorageType.redis,
+            redis_client=redis_client,
+        )
+        try:
+            writer.update(1)
+            stored = writer._data.get_timestamp()
+            assert stored is not None
+            reader._current_dt = None
+            reader._sync_current_dt_from_storage()
+            assert reader._current_dt == reader._align_to_frame_step(stored)
+        finally:
+            writer.clear()

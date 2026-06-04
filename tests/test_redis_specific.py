@@ -9,6 +9,8 @@ import pickle
 import threading
 import time
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from call_gate.errors import CallGateValueError
@@ -498,6 +500,74 @@ class TestRedisStorageSerialization:
 
         finally:
             storage.clear()
+
+    def test_extract_client_state_without_connection_pool(self):
+        """Standalone Redis client without connection pool yields empty client_state."""
+        client = create_redis_client()
+        storage = RedisStorage("test", 5, client=client)
+        original_pool = storage._client.connection_pool
+        try:
+            storage._client.connection_pool = None
+            state = storage._extract_client_state()
+            assert state["client_type"] == "redis"
+            assert state["client_state"] == {}
+        finally:
+            storage._client.connection_pool = original_pool
+            storage.clear()
+
+    def test_restore_cluster_client_from_serialized_nodes(self):
+        """Cluster client is rebuilt from serialized startup_nodes."""
+        from unittest.mock import patch
+
+        client_state = {"startup_nodes": [{"host": "127.0.0.1", "port": 7001}]}
+        mock_instance = MagicMock()
+        with patch("call_gate.storages.redis.RedisCluster", return_value=mock_instance) as cluster_cls:
+            restored = RedisStorage._restore_client_from_state("cluster", client_state)
+        assert restored is mock_instance
+        cluster_cls.assert_called_once()
+        kwargs = cluster_cls.call_args.kwargs
+        assert "startup_nodes" in kwargs
+        assert kwargs["startup_nodes"][0].host == "127.0.0.1"
+        assert kwargs["startup_nodes"][0].port == 7001
+
+    def test_extract_constructor_params_handles_process_object_dict_errors(self):
+        """Inner object dict processing errors return empty params."""
+        client = create_redis_client()
+        storage = RedisStorage("test", 5, client=client)
+
+        class BrokenDictObject:
+            @property
+            def __dict__(self):
+                raise TypeError("broken dict")
+
+        try:
+            result = storage._extract_constructor_params(BrokenDictObject(), {"host"})
+            assert result == {}
+        finally:
+            storage.clear()
+
+    def test_list_serialization_skips_unpickleable_items(self):
+        """Unpickleable list entries are omitted from serialized params."""
+        client = create_redis_client()
+        storage = RedisStorage("test", 5, client=client)
+
+        try:
+            found_params: dict = {}
+            storage._process_list_value(
+                "items",
+                [1, lambda: None, 3],
+                {"items"},
+                set(),
+                found_params,
+            )
+            assert found_params == {"items": [1, 3]}
+        finally:
+            storage.clear()
+
+    def test_decode_redis_str_normalizes_bytes(self):
+        """Bytes Redis responses are decoded to str."""
+        assert RedisStorage._decode_redis_str(None) is None
+        assert RedisStorage._decode_redis_str(b"2026-06-01T12:00:00") == "2026-06-01T12:00:00"
 
 
 if __name__ == "__main__":

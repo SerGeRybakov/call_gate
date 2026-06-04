@@ -328,7 +328,7 @@ class CallGate:
             storage_type = RedisStorage
             self._validate_redis_configuration(redis_client, storage)
             # Add redis_client for Redis storage (Redis uses its own locks, not manager)
-            if redis_client is not None:
+            if redis_client is not None:  # pragma: no branch
                 storage_kw["client"] = redis_client
                 storage_kw["lock_timeout"] = redis_lock_timeout
                 storage_kw["lock_blocking_timeout"] = redis_lock_blocking_timeout

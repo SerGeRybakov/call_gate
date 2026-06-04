@@ -1,9 +1,11 @@
+import pickle
 import random
 import sys
 import time
 
 from copy import deepcopy
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import dateutil
@@ -854,6 +856,81 @@ class TestStorageEdgeCases:
         try:
             # Should initialize successfully with None timestamp
             assert gate._current_dt is None or isinstance(gate._current_dt, datetime)
+        finally:
+            gate.clear()
+
+
+class TestCallGatePersistenceAndRefresh:
+    def test_call_gate_survives_pickle_roundtrip(self):
+        gate = CallGate(random_name(), 10, 1)
+        try:
+            gate.update(3)
+            expected_sum = gate.sum
+            state = gate.__getstate__()
+            restored = CallGate.__new__(CallGate)
+            restored.__setstate__(state)
+            assert restored._lock is None
+            assert restored._rlock is None
+            assert restored.sum == expected_sum
+            restored.update(2)
+            assert restored._lock is not None
+            assert restored._rlock is not None
+            assert restored.sum == expected_sum + 2
+        finally:
+            gate.clear()
+            try:
+                restored.clear()
+            except NameError:
+                pass
+
+    def test_pickle_roundtrip_preserves_gate_state(self):
+        gate = CallGate(random_name(), 10, 1)
+        try:
+            gate.update(3)
+            roundtrip = pickle.loads(pickle.dumps(gate))  # noqa: S301
+            roundtrip.update(1)
+            assert roundtrip.sum == 4
+        finally:
+            gate.clear()
+            try:
+                roundtrip.clear()
+            except NameError:
+                pass
+
+    def test_refresh_frames_advances_window(self):
+        frame_step = timedelta(seconds=1)
+        base = datetime(2026, 6, 1, 12, 0, 0)
+        gate = CallGate(random_name(), timedelta(seconds=4), frame_step)
+        try:
+            now = {"t": base}
+
+            def fake_current_step(_self):
+                remainder = now["t"].timestamp() % frame_step.total_seconds()
+                return now["t"] - timedelta(seconds=remainder)
+
+            with patch.object(CallGate, "_current_step", fake_current_step):
+                gate.update(5)
+                assert gate.data[0] == 5
+                now["t"] = base + frame_step
+                gate._refresh_frames()
+                assert gate.data[0] == 0
+                assert gate.data[1] == 5
+        finally:
+            gate.clear()
+
+    def test_from_file_overrides_storage(self, tmp_path):
+        path = tmp_path / "gate.json"
+        gate = CallGate(random_name(), 10, 1, gate_limit=20)
+        try:
+            gate.update(4)
+            state = gate.state
+            gate.to_file(path)
+            restored = CallGate.from_file(path, storage=GateStorageType.shared)
+            try:
+                assert restored.storage == "shared"
+                assert restored.state == state
+            finally:
+                restored.clear()
         finally:
             gate.clear()
 
