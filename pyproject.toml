@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "call-gate"
-version = "2.0.1"
+version = "2.1.0b1"
 description = "CallGate - Awesome Rate Limiter for Python"
 authors = ["Sergey Rybakov <serge.rybakov@gmail.com>"]
 readme = "README.md"
@@ -124,6 +124,7 @@ select = [
 ignore = [
   "D105",  # missing docstring in __init__
   "D107",  # missing docstring in __init__
+  "RUF002",  # ambiguous Unicode character in docstring
 ]
 
 # https://docs.astral.sh/ruff/settings/#extend-per-file-ignores
@@ -138,6 +139,7 @@ ignore = [
   "D102",  # Missing docstring in public method
   "D103",  # Missing docstring in public function
   "PLR2004",  # Consider using 'with' for resource-allocating operations
+  "PLW0108",
   "PT003",  # Missing docstring in public method
   "PT011",  # Missing type annotation for function return value
   "PT012",  # Missing type annotation for 'self' in method

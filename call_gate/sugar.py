@@ -94,12 +94,14 @@ class _CallGateWrapper:
     :param gate: CallGate instance.
     :param value: Value to be added to the counter.
     :param throw: Flag for throwing exceptions.
+    :param gate_limit_max_wait_frames: Max **frames** to wait through when ``throw=False``; see ``update``.
     """
 
-    def __init__(self, gate: "CallGate", value: int, throw: bool):
+    def __init__(self, gate: "CallGate", value: int, throw: bool, gate_limit_max_wait_frames: int):
         self.gate = gate
         self.value = value
         self.throw = throw
+        self.gate_limit_max_wait_frames = gate_limit_max_wait_frames
 
     # Method for use as a decorator
     def __call__(self, func: Callable) -> Union[Callable, Awaitable]:
@@ -120,7 +122,7 @@ class _CallGateWrapper:
             :param kwargs: Keyword arguments to be passed to the wrapped function or coroutine.
             :return: The result of the wrapped function or coroutine.
             """
-            await self.gate.update(self.value, self.throw)
+            await self.gate.update(self.value, self.throw, self.gate_limit_max_wait_frames)
             return await func(*args, **kwargs)
 
         @wraps(func)
@@ -135,7 +137,7 @@ class _CallGateWrapper:
             :param kwargs: Keyword arguments to be passed to the wrapped function or coroutine.
             :return: The result of the wrapped function or coroutine.
             """
-            self.gate.update(self.value, self.throw)
+            self.gate.update(self.value, self.throw, self.gate_limit_max_wait_frames)
             return func(*args, **kwargs)
 
         if iscoroutinefunction(func):
@@ -152,7 +154,7 @@ class _CallGateWrapper:
         :param self: CallGate instance.
         :return: The CallGate instance.
         """
-        self.gate.update(self.value, self.throw)
+        self.gate.update(self.value, self.throw, self.gate_limit_max_wait_frames)
         return self.gate
 
     def __exit__(
@@ -180,7 +182,7 @@ class _CallGateWrapper:
         :param self: CallGate instance.
         :return: The CallGate instance.
         """
-        await self.gate.update(self.value, self.throw)
+        await self.gate.update(self.value, self.throw, self.gate_limit_max_wait_frames)
         return self.gate
 
     async def __aexit__(

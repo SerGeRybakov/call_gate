@@ -81,6 +81,34 @@ class RedisReentrantLock:
             self.client.expire(self.owner_key, self.timeout)
 
 
+_ATOMIC_UPDATE_LUA = """
+local key_list = KEYS[1]
+local key_sum = KEYS[2]
+local inc_value = tonumber(ARGV[1])
+local frame_limit = tonumber(ARGV[2])
+local gate_limit = tonumber(ARGV[3])
+local current_value = tonumber(redis.call("LINDEX", key_list, 0) or "0")
+local new_value = current_value + inc_value
+local current_sum = tonumber(redis.call("GET", key_sum) or "0")
+local new_sum = current_sum + inc_value
+if frame_limit > 0 and new_value > frame_limit then
+  return {err="Frame limit exceeded"}
+end
+if gate_limit > 0 and new_sum > gate_limit then
+  return {err="Gate limit exceeded"}
+end
+if new_sum < 0 then
+  return {err="Gate overflow"}
+end
+if new_value < 0 then
+  return {err="Frame overflow"}
+end
+redis.call("LSET", key_list, 0, new_value)
+redis.call("SET", key_sum, new_sum)
+return new_value
+"""
+
+
 class RedisStorage(BaseStorage):
     """Redis-based storage supporting both single Redis and Redis cluster.
 
@@ -97,6 +125,10 @@ class RedisStorage(BaseStorage):
     :param client: Pre-initialized Redis or RedisCluster client (recommended).
     """
 
+    def _register_lua_scripts(self) -> None:
+        """Register Lua scripts; redis-py retries with EVAL on NOSCRIPT (redis 8)."""
+        self._atomic_update_script = self._client.register_script(_ATOMIC_UPDATE_LUA)
+
     def _create_locks(self) -> None:
         """Create Redis locks for this storage instance."""
         self._lock = self._client.lock(
@@ -106,6 +138,7 @@ class RedisStorage(BaseStorage):
             blocking_timeout=self._lock_blocking_timeout,
         )
         self._rlock = RedisReentrantLock(self._client, f"{{{self.name}}}", timeout=self._lock_timeout)
+        self._register_lua_scripts()
 
     def __init__(
         self,
@@ -390,14 +423,22 @@ class RedisStorage(BaseStorage):
 
     def _extract_client_state(self) -> dict[str, Any]:
         """Extract client constructor parameters for serialization."""
-        client_type = "cluster" if isinstance(self._client, RedisCluster) else "redis"
-
-        # Get constructor signature from the client's class
-        sig = inspect.signature(self._client.__class__.__init__)
-        valid_params = set(sig.parameters.keys()) - {"self", "connection_pool"}
-
-        # Extract constructor parameters recursively
-        constructor_params = self._extract_constructor_params(self._client, valid_params)
+        if isinstance(self._client, RedisCluster):
+            client_type = "cluster"
+            sig = inspect.signature(self._client.__class__.__init__)
+            valid_params = set(sig.parameters.keys()) - {"self", "connection_pool"}
+            constructor_params = self._extract_constructor_params(self._client, valid_params)
+        else:
+            client_type = "redis"
+            pool = getattr(self._client, "connection_pool", None)
+            if pool is not None and hasattr(pool, "connection_kwargs"):
+                constructor_params = {
+                    key: value
+                    for key, value in pool.connection_kwargs.items()
+                    if isinstance(value, (str, int, float, bool, type(None)))
+                }
+            else:
+                constructor_params = {}
 
         return {"client_type": client_type, "client_state": constructor_params}
 
@@ -414,7 +455,12 @@ class RedisStorage(BaseStorage):
                 kwargs["startup_nodes"] = startup_nodes
 
         else:
-            kwargs = client_state
+            valid_params = set(inspect.signature(Redis.__init__).parameters.keys()) - {"self", "connection_pool"}
+            kwargs = {
+                key: value
+                for key, value in client_state.items()
+                if key in valid_params and isinstance(value, (str, int, float, bool, type(None)))
+            }
             obj = Redis
 
         return obj(**kwargs)
@@ -559,48 +605,10 @@ class RedisStorage(BaseStorage):
         :raises CallGateOverflowError: If the new value of the most recent frame or the storage sum is less than 0.
         :return: The new value of the most recent frame.
         """
-        lua_script = """
-        local key_list = KEYS[1]
-        local key_sum = KEYS[2]
-        local key_timestamp = KEYS[3]
-        local inc_value = tonumber(ARGV[1])
-        local frame_limit = tonumber(ARGV[2])
-        local gate_limit = tonumber(ARGV[3])
-        local timestamp = ARGV[4]
-        local current_value = tonumber(redis.call("LINDEX", key_list, 0) or "0")
-        local new_value = current_value + inc_value
-        local current_sum = tonumber(redis.call("GET", key_sum) or "0")
-        local new_sum = current_sum + inc_value
-        if frame_limit > 0 and new_value > frame_limit then
-          return {err="Frame limit exceeded"}
-        end
-        if gate_limit > 0 and new_sum > gate_limit then
-          return {err="Gate limit exceeded"}
-        end
-        if new_sum < 0 then
-          return {err="Gate overflow"}
-        end
-        if new_value < 0 then
-          return {err="Frame overflow"}
-        end
-        redis.call("LSET", key_list, 0, new_value)
-        redis.call("SET", key_sum, new_sum)
-        redis.call("SET", key_timestamp, timestamp)
-        return new_value
-        """
         try:
-            # Get current timestamp for atomic update
-            current_timestamp = datetime.now().isoformat()
-            self._client.eval(
-                lua_script,
-                3,
-                self._data,
-                self._sum,
-                self._timestamp,
-                str(value),
-                str(frame_limit),
-                str(gate_limit),
-                current_timestamp,
+            self._atomic_update_script(
+                keys=[self._data, self._sum],
+                args=[str(value), str(frame_limit), str(gate_limit)],
             )
         except ResponseError as e:
             error_message = str(e)
@@ -614,6 +622,15 @@ class RedisStorage(BaseStorage):
                 raise FrameOverflowError("Frame value must be >= 0.") from e
             raise e
 
+    @staticmethod
+    def _decode_redis_str(value: Any) -> Optional[str]:
+        """Normalize Redis GET result to str (cluster/spawn may return bytes)."""
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode()
+        return str(value)
+
     def get_timestamp(self) -> Optional[datetime]:
         """Get the last update timestamp from storage.
 
@@ -621,7 +638,7 @@ class RedisStorage(BaseStorage):
         """
         with self._rlock:
             with self._lock:
-                ts_str: str = self._client.get(self._timestamp)
+                ts_str = self._decode_redis_str(self._client.get(self._timestamp))
                 if ts_str:
                     return datetime.fromisoformat(ts_str)
                 return None
@@ -659,6 +676,7 @@ class RedisStorage(BaseStorage):
         state.pop("_client", None)
         state.pop("_lock", None)
         state.pop("_rlock", None)
+        state.pop("_atomic_update_script", None)
 
         # Extract client metadata (client must exist by this point)
         client_info = self._extract_client_state()
@@ -689,5 +707,6 @@ class RedisStorage(BaseStorage):
             warnings.filterwarnings("ignore", category=DeprecationWarning, module="redis")
             self._client = self._restore_client_from_state(client_type, client_state)
 
-        # Recreate locks using reusable method
+        # Recreate locks and registered Lua scripts (scripts are not picklable)
         self._create_locks()
+        self._register_lua_scripts()

@@ -185,12 +185,12 @@ class TestCallGateAsyncio:
             timedelta(seconds=1),
             timedelta(milliseconds=100),
             gate_limit=100,
-            frame_limit=10,
+            frame_limit=0,
             storage=storage,
         )
 
         while gate.sum < gate.gate_limit:
-            await gate.update()
+            await gate.update(throw=True)
 
         try:
             with pytest.raises(GateLimitError):
@@ -209,8 +209,7 @@ class TestCallGateAsyncio:
             storage=storage,
         )
 
-        while gate.current_frame.value < gate.frame_limit:
-            await gate.update()
+        await gate.update(gate.frame_limit, throw=True)
 
         try:
             with pytest.raises(FrameLimitError):

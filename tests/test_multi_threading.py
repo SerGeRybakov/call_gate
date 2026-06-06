@@ -7,11 +7,19 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from call_gate import GateStorageType
 from tests.parameters import GITHUB_ACTIONS_REDIS_TIMEOUT, create_call_gate, random_name, storages
 
 
 if TYPE_CHECKING:
     from call_gate import CallGate
+
+
+def _gate_size_for_storage(storage: str) -> int:
+    """In-process storages use a 2s window; Redis needs a wider window under load."""
+    if storage in ("simple", "shared", GateStorageType.simple, GateStorageType.shared):
+        return 2
+    return 60
 
 
 def get_test_params() -> list[tuple[int, int, int]]:
@@ -40,7 +48,7 @@ class TestCallGateInThreadsManual:
         get_test_params(),
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
-        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=_gate_size_for_storage(storage), frame_step=1, storage=storage)
 
         def worker():
             for _ in range(updates_per_thread):
@@ -71,7 +79,7 @@ class TestCallGateInThreadsManual:
         get_test_params(),
     )
     def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=_gate_size_for_storage(storage), frame_step=1, storage=storage)
 
         @gate(update_value)
         def dummy_function():
@@ -100,7 +108,7 @@ class TestCallGateInThreadsManual:
         get_test_params(),
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=_gate_size_for_storage(storage), frame_step=1, storage=storage)
 
         def dummy_function(gate: "CallGate", update_value):
             # Any function that returns a result
@@ -132,7 +140,7 @@ class TestCallGateInThreadsExecutor:
         get_test_params(),
     )
     def test_concurrent_updates(self, num_threads, updates_per_thread, update_value, storage):
-        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=_gate_size_for_storage(storage), frame_step=1, storage=storage)
 
         def worker(*args, **kwargs):
             for _ in range(updates_per_thread):
@@ -154,7 +162,7 @@ class TestCallGateInThreadsExecutor:
         get_test_params(),
     )
     def test_decorated_function_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=_gate_size_for_storage(storage), frame_step=1, storage=storage)
 
         @gate(update_value)
         def dummy_function():
@@ -180,7 +188,7 @@ class TestCallGateInThreadsExecutor:
         get_test_params(),
     )
     def test_context_manager_concurrent(self, num_threads, updates_per_thread, update_value, storage):
-        gate = create_call_gate(random_name(), gate_size=2, frame_step=1, storage=storage)
+        gate = create_call_gate(random_name(), gate_size=_gate_size_for_storage(storage), frame_step=1, storage=storage)
 
         def dummy_function(gate: "CallGate", update_value):
             # Any function that returns a result

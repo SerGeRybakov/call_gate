@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-06-05
+### Fixed
+- **Distributed sliding window**: Sync local `_current_dt` from Redis timestamp (aligned to `frame_step`) before slide — fixes `sum` loss with multi-process writers and `check_limits()` monitors sharing one gate
+
+### Changed
+- **`update()` validation**: Immediate `GateLimitError` if `value > gate_limit` (waiting cannot help)
+- **Redis storage**: `register_script` for `atomic_update`; pickle-safe locks, client restore from pool kwargs, Lua script re-registration after unpickling
+- **CallGate**: Pickle-safe locks via `__getstate__` / `__setstate__` and lazy `_ensure_process_locks()`
+
+### Added
+- **`gate_limit_max_wait_frames`**: Frame-step retry budget when `throw=False` — new parameter in `update()`, `__call__()`, decorator, and context manager signatures
+- **Logging**: Optional `log_level` and `log_format` constructor parameters for per-gate `CallGate.<name>` logger
+
+---
+
+## [2.0.1] - 2026-04-09
+
+### Fixed
+- **Deadlocks under nested locking** ([#52](https://github.com/SerGeRybakov/call_gate/pull/52)): Refactored internal API into `*_unlocked` helpers with consistent `_rlock` → `_lock` ordering in `update`, `check_limits`, `clear`, `as_dict`, and property accessors
+
+### Changed
+- **Makefile**: Added `help` target; increased Docker Compose startup wait from 10s to 15s in test targets
+
+---
+
 ## [2.0.0] - 2025-12-10
 
 ### ⚠️ BREAKING CHANGES

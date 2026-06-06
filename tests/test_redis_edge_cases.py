@@ -2,7 +2,7 @@
 
 import pytest
 
-from call_gate.errors import GateOverflowError
+from call_gate.errors import FrameOverflowError, GateOverflowError
 from call_gate.storages.redis import RedisStorage
 from tests.parameters import create_redis_client, random_name
 
@@ -103,6 +103,24 @@ class TestRedisStorageEdgeCases:
             with pytest.raises(GateOverflowError, match="Gate sum value must be >= 0"):
                 storage.atomic_update(-6, 0, 0)  # This causes gate sum < 0
 
+        finally:
+            try:
+                storage.clear()
+            except Exception:
+                pass
+
+    def test_atomic_update_rejects_negative_frame_value(self):
+        """Decrement that would make current frame negative but sum non-negative is rejected."""
+        client = create_redis_client()
+        storage = RedisStorage(random_name(), capacity=3, client=client)
+
+        try:
+            storage._client.delete(storage._data, storage._sum)
+            storage._client.rpush(storage._data, 2, 8, 0)
+            storage._client.set(storage._sum, 10)
+
+            with pytest.raises(FrameOverflowError, match="Frame value must be >= 0"):
+                storage.atomic_update(-5, 0, 0)
         finally:
             try:
                 storage.clear()
